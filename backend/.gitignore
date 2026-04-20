@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+data/indexer_state.json
+.venv/
+*.egg-info/
