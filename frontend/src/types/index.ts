@@ -1,7 +1,14 @@
 // API response types matching the FastAPI backend
 
+export interface StakingInfo {
+  validator_id: number;
+  staked: number;
+  rewards: number;
+}
+
 export interface WalletSummary {
   address: string;
+  balance: number | null;
   tx_count: number;
   total_sent: number;
   total_received: number;
@@ -10,6 +17,8 @@ export interface WalletSummary {
   last_seen: number | null;
   risk_score: number | null;
   labels: string[];
+  source: 'indexed' | 'rpc';
+  staking: StakingInfo[];
 }
 
 export interface TransactionRecord {

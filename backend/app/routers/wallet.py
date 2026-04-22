@@ -1,15 +1,27 @@
-"""Wallet lookup and analytics endpoints."""
+"""Wallet lookup and analytics endpoints.
 
-from fastapi import APIRouter, HTTPException
+Falls back to live Monad RPC when wallet is not in our indexed data.
+"""
+
+import httpx
+from fastapi import APIRouter
 from pydantic import BaseModel
 
+from app.config import settings
 from app.database import db
 
 router = APIRouter()
 
 
+class StakingInfo(BaseModel):
+    validator_id: int
+    staked: float  # MON staked
+    rewards: float  # unclaimed rewards in MON
+
+
 class WalletSummary(BaseModel):
     address: str
+    balance: float | None = None  # MON balance
     tx_count: int = 0
     total_sent: float = 0.0
     total_received: float = 0.0
@@ -18,6 +30,8 @@ class WalletSummary(BaseModel):
     last_seen: int | None = None
     risk_score: float | None = None
     labels: list[str] = []
+    source: str = "indexed"  # "indexed" or "rpc" — tells frontend where data came from
+    staking: list[StakingInfo] = []  # staking positions on Monad
 
 
 class TransactionRecord(BaseModel):
@@ -30,11 +44,133 @@ class TransactionRecord(BaseModel):
     method: str | None = None
 
 
+# ── RPC helpers ─────────────────────────────────────────────────────────
+
+def _rpc_call(method: str, params: list) -> dict | None:
+    """Quick JSON-RPC call to Monad."""
+    try:
+        resp = httpx.post(
+            settings.monad_rpc_url,
+            json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1},
+            timeout=10,
+        )
+        data = resp.json()
+        return data.get("result")
+    except Exception:
+        return None
+
+
+def _get_balance(address: str) -> float | None:
+    result = _rpc_call("eth_getBalance", [address, "latest"])
+    if result:
+        return int(result, 16) / 1e18
+    return None
+
+
+def _get_tx_count(address: str) -> int:
+    result = _rpc_call("eth_getTransactionCount", [address, "latest"])
+    if result:
+        return int(result, 16)
+    return 0
+
+
+STAKING_CONTRACT = "0x0000000000000000000000000000000000001000"
+GET_DELEGATOR_SELECTOR = "0x573c1ce0"
+# getDelegations(address, uint64 startValidatorId) → returns up to 100 delegations
+GET_DELEGATIONS_SELECTOR = "0x4fd66050"
+
+
+def _get_staking_info(address: str) -> list[dict]:
+    """Query Monad staking precompile for delegation info.
+
+    Tries validators 1-20 (covers most cases). Returns list of active stakes.
+    """
+    stakes = []
+    addr_padded = address.lower().replace("0x", "").zfill(40)
+
+    # Try getDelegations first (returns paginated list)
+    data = GET_DELEGATIONS_SELECTOR + "000000000000000000000000" + addr_padded + "0" * 64
+    result = _rpc_call("eth_call", [{"to": STAKING_CONTRACT, "data": data}, "latest"])
+
+    if result and result != "0x" and len(result) > 66:
+        # Parse the response — it returns an array of (validatorId, stake) tuples
+        # For now, fall back to individual validator queries
+        pass
+
+    # Fallback: check validators 1-20 individually
+    for val_id in range(1, 21):
+        val_hex = hex(val_id)[2:].zfill(64)
+        addr_hex = "000000000000000000000000" + addr_padded
+        data = GET_DELEGATOR_SELECTOR + val_hex + addr_hex
+
+        result = _rpc_call("eth_call", [{"to": STAKING_CONTRACT, "data": data}, "latest"])
+        if not result or result == "0x" or len(result) < 130:
+            continue
+
+        # Decode: chunk0 = staked amount, chunk2 = unclaimed rewards
+        hex_data = result[2:]
+        chunks = [hex_data[i:i+64] for i in range(0, len(hex_data), 64)]
+        if len(chunks) < 3:
+            continue
+
+        staked_wei = int(chunks[0], 16)
+        rewards_wei = int(chunks[2], 16)
+
+        if staked_wei > 0:
+            stakes.append({
+                "validator_id": val_id,
+                "staked": staked_wei / 1e18,
+                "rewards": rewards_wei / 1e18,
+            })
+
+    return stakes
+
+
+def _get_recent_txs(address: str, limit: int = 20) -> list[dict]:
+    """Get recent transactions via block scanning (limited — best effort)."""
+    # For MVP, we scan the last ~50 blocks for this address
+    latest_hex = _rpc_call("eth_blockNumber", [])
+    if not latest_hex:
+        return []
+
+    latest = int(latest_hex, 16)
+    txs = []
+
+    for block_num in range(latest, max(latest - 50, 0), -1):
+        block = _rpc_call("eth_getBlockByNumber", [hex(block_num), True])
+        if not block:
+            continue
+        timestamp = int(block["timestamp"], 16)
+        for tx in block.get("transactions", []):
+            if isinstance(tx, str):
+                continue
+            from_addr = (tx.get("from") or "").lower()
+            to_addr = (tx.get("to") or "").lower()
+            if from_addr == address or to_addr == address:
+                value_wei = int(tx.get("value", "0x0"), 16)
+                input_data = tx.get("input", "0x")
+                txs.append({
+                    "hash": tx["hash"],
+                    "block_number": block_num,
+                    "timestamp": timestamp,
+                    "from_addr": from_addr,
+                    "to_addr": to_addr,
+                    "value": value_wei / 1e18,
+                    "method": input_data[:10] if len(input_data) >= 10 else None,
+                })
+                if len(txs) >= limit:
+                    return txs
+    return txs
+
+
+# ── Endpoints ───────────────────────────────────────────────────────────
+
 @router.get("/{address}", response_model=WalletSummary)
 async def get_wallet(address: str):
-    """Look up a wallet by address — returns summary stats and risk score."""
+    """Look up a wallet — checks indexed data first, falls back to live RPC."""
     address = address.lower()
 
+    # Try indexed data first
     result = db.query(
         """
         MATCH (w:Wallet {address: $address})
@@ -54,28 +190,60 @@ async def get_wallet(address: str):
         {"address": address},
     )
 
-    if not result:
-        raise HTTPException(status_code=404, detail="Wallet not found in indexed data")
+    if result and result[0].get("address"):
+        r = result[0]
+        balance = _get_balance(address)  # always fetch live balance
+        staking = _get_staking_info(address)
+        return WalletSummary(
+            address=r["address"],
+            balance=balance,
+            tx_count=(r["sent_count"] or 0) + (r["recv_count"] or 0),
+            total_sent=r["total_sent"] or 0.0,
+            total_received=r["total_received"] or 0.0,
+            unique_interactions=r["unique_interactions"] or 0,
+            first_seen=r["first_seen"],
+            last_seen=r["last_seen"],
+            risk_score=r["risk_score"],
+            labels=r["labels"] or [],
+            source="indexed",
+            staking=[StakingInfo(**s) for s in staking],
+        )
 
-    r = result[0]
+    # Fallback: live RPC lookup
+    balance = _get_balance(address)
+    if balance is None:
+        # Address doesn't exist on chain at all
+        return WalletSummary(
+            address=address,
+            balance=0.0,
+            tx_count=0,
+            source="rpc",
+            labels=["unknown"],
+        )
+
+    nonce = _get_tx_count(address)
+    staking = _get_staking_info(address)
+
+    labels = ["not yet indexed"] if nonce > 0 else ["new wallet"]
+    if staking:
+        labels.append("staker")
+
     return WalletSummary(
-        address=r["address"],
-        tx_count=(r["sent_count"] or 0) + (r["recv_count"] or 0),
-        total_sent=r["total_sent"] or 0.0,
-        total_received=r["total_received"] or 0.0,
-        unique_interactions=r["unique_interactions"] or 0,
-        first_seen=r["first_seen"],
-        last_seen=r["last_seen"],
-        risk_score=r["risk_score"],
-        labels=r["labels"] or [],
+        address=address,
+        balance=balance,
+        tx_count=nonce,
+        source="rpc",
+        labels=labels,
+        staking=[StakingInfo(**s) for s in staking],
     )
 
 
 @router.get("/{address}/transactions", response_model=list[TransactionRecord])
 async def get_wallet_transactions(address: str, limit: int = 50):
-    """Get recent transactions for a wallet."""
+    """Get recent transactions — indexed data first, RPC fallback."""
     address = address.lower()
 
+    # Try indexed data
     result = db.query(
         """
         MATCH (from:Wallet)-[:SENT]->(tx:Transaction)-[:TO]->(to:Wallet)
@@ -93,7 +261,12 @@ async def get_wallet_transactions(address: str, limit: int = 50):
         {"address": address, "limit": limit},
     )
 
-    return [TransactionRecord(**r) for r in result]
+    if result:
+        return [TransactionRecord(**r) for r in result]
+
+    # Fallback: scan recent blocks via RPC
+    rpc_txs = _get_recent_txs(address, limit=min(limit, 20))
+    return [TransactionRecord(**tx) for tx in rpc_txs]
 
 
 @router.get("/{address}/graph")
@@ -144,5 +317,9 @@ async def get_wallet_graph(address: str, depth: int = 2, limit: int = 100):
             "value": r["value"],
             "timestamp": r["timestamp"],
         })
+
+    # If no graph data indexed, return just the target node
+    if not nodes:
+        nodes[address] = {"address": address}
 
     return {"nodes": list(nodes.values()), "edges": edges}

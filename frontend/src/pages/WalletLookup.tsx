@@ -43,10 +43,15 @@ function WalletDashboard({ address }: { address: string }) {
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>WALLET ADDRESS</div>
             <div className="address-full">{wallet.address}</div>
+            {wallet.source === 'rpc' && (
+              <div style={{ marginTop: 6, fontSize: 12, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}>
+                ⚡ Live data from Monad RPC — this wallet hasn't been indexed yet for full analytics
+              </div>
+            )}
           </div>
-          {risk && <RiskBadge score={risk.risk_score} />}
+          {wallet.source === 'indexed' && risk && <RiskBadge score={risk.risk_score} />}
         </div>
-        {risk && risk.flags.length > 0 && (
+        {wallet.source === 'indexed' && risk && risk.flags.length > 0 && (
           <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {risk.flags.map((flag) => (
               <span key={flag} className="badge badge-high">{flag}</span>
@@ -57,37 +62,72 @@ function WalletDashboard({ address }: { address: string }) {
 
       {/* Stats row */}
       <div className="stats-grid">
+        {wallet.balance != null && (
+          <div className="stat-card">
+            <div className="label">Balance</div>
+            <div className="value">{formatMON(wallet.balance)} MON</div>
+          </div>
+        )}
         <div className="stat-card">
-          <div className="label">Total Transactions</div>
-          <div className="value">{wallet.tx_count}</div>
+          <div className="label">{wallet.source === 'rpc' ? 'Nonce (Total Sent)' : 'Total Transactions'}</div>
+          <div className="value">{wallet.tx_count.toLocaleString()}</div>
         </div>
-        <div className="stat-card">
-          <div className="label">Total Sent</div>
-          <div className="value">{formatMON(wallet.total_sent)} MON</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Total Received</div>
-          <div className="value">{formatMON(wallet.total_received)} MON</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Unique Interactions</div>
-          <div className="value">{wallet.unique_interactions}</div>
-        </div>
+        {wallet.source === 'indexed' && (
+          <>
+            <div className="stat-card">
+              <div className="label">Total Sent</div>
+              <div className="value">{formatMON(wallet.total_sent)} MON</div>
+            </div>
+            <div className="stat-card">
+              <div className="label">Total Received</div>
+              <div className="value">{formatMON(wallet.total_received)} MON</div>
+            </div>
+            <div className="stat-card">
+              <div className="label">Unique Interactions</div>
+              <div className="value">{wallet.unique_interactions}</div>
+            </div>
+          </>
+        )}
       </div>
 
+      {/* Staking info */}
+      {wallet.staking && wallet.staking.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-title" style={{ marginBottom: 12 }}>🥩 Staking Positions</div>
+          {wallet.staking.map((s) => (
+            <div key={s.validator_id} style={{ display: 'flex', gap: 32, flexWrap: 'wrap', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Validator </span>
+                <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>#{s.validator_id}</span>
+              </div>
+              <div>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Staked: </span>
+                <span style={{ fontWeight: 600, color: '#22c55e' }}>{formatMON(s.staked)} MON</span>
+              </div>
+              <div>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Rewards: </span>
+                <span style={{ fontWeight: 600, color: '#f59e0b' }}>{s.rewards.toFixed(4)} MON</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Time range */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
-          <div>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>First Seen: </span>
-            <span style={{ fontSize: 13 }}>{formatTimestamp(wallet.first_seen)}</span>
-          </div>
-          <div>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Last Seen: </span>
-            <span style={{ fontSize: 13 }}>{formatTimestamp(wallet.last_seen)}</span>
+      {wallet.source === 'indexed' && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+            <div>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>First Seen: </span>
+              <span style={{ fontSize: 13 }}>{formatTimestamp(wallet.first_seen)}</span>
+            </div>
+            <div>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Last Seen: </span>
+              <span style={{ fontSize: 13 }}>{formatTimestamp(wallet.last_seen)}</span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Tabs */}
       <div className="tabs">
