@@ -6,6 +6,7 @@ import { getWalletGraph } from '../services/api';
 import { getFavourites, isFavourite } from '../stores/favourites';
 import Loading from '../components/Loading';
 import ErrorBox from '../components/ErrorBox';
+import { formatMON } from '../utils/format';
 import type { GraphData } from '../types';
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -49,13 +50,6 @@ const EDGE_HIGHLIGHT = 'rgba(129, 140, 248, 0.85)';
 const BG_COLOR = '#0a0a14';
 
 // ── Helpers ────────────────────────────────────────────────────────────
-
-function formatMON(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  if (value >= 1) return value.toFixed(2);
-  return value.toFixed(4);
-}
 
 function shortAddr(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;

@@ -106,7 +106,7 @@ async def search(query: SearchQuery):
             data=None,
         )
 
-    result = db.query(template["cypher"])
+    result = await db.aquery(template["cypher"])
 
     return SearchResult(
         answer=template["description"],

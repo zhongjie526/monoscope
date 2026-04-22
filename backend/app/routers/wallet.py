@@ -1,7 +1,11 @@
 """Wallet lookup and analytics endpoints.
 
 Falls back to live Monad RPC when wallet is not in our indexed data.
+All HTTP and DB calls are async-safe (non-blocking event loop).
 """
+
+import asyncio
+import logging
 
 import httpx
 from fastapi import APIRouter
@@ -11,7 +15,19 @@ from app.config import settings
 from app.database import db
 from app.background_index import index_transactions_background, enrich_wallet_background
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# Module-level async client — reused across requests (connection pooling)
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=10)
+    return _http_client
 
 
 class StakingInfo(BaseModel):
@@ -31,7 +47,7 @@ class WalletSummary(BaseModel):
     last_seen: int | None = None
     risk_score: float | None = None
     labels: list[str] = []
-    source: str = "indexed"  # "indexed" or "rpc" — tells frontend where data came from
+    source: str = "indexed"  # "indexed", "rpc", or "not_indexed"
     staking: list[StakingInfo] = []  # staking positions on Monad
 
 
@@ -45,15 +61,69 @@ class TransactionRecord(BaseModel):
     method: str | None = None
 
 
-# ── RPC helpers ─────────────────────────────────────────────────────────
+# ── Wallet summary Cypher (shared by get_wallet and scan_wallet) ────────
 
-def _rpc_call(method: str, params: list) -> dict | None:
-    """Quick JSON-RPC call to Monad."""
+_WALLET_SUMMARY_CYPHER = """
+MATCH (w:Wallet {address: $address})
+CALL {
+    WITH w
+    OPTIONAL MATCH (w)-[:SENT]->(tx_out:Transaction)-[:TO]->(other_out:Wallet)
+    RETURN count(tx_out) AS sent_count,
+           coalesce(sum(tx_out.value), 0.0) AS total_sent
+}
+CALL {
+    WITH w
+    OPTIONAL MATCH (sender:Wallet)-[:SENT]->(tx_in:Transaction)-[:TO]->(w)
+    RETURN count(tx_in) AS recv_count,
+           coalesce(sum(tx_in.value), 0.0) AS total_received
+}
+CALL {
+    WITH w
+    OPTIONAL MATCH (w)-[:SENT]->(:Transaction)-[:TO]->(out:Wallet)
+    WITH w, collect(DISTINCT out.address) AS outs
+    OPTIONAL MATCH (inc:Wallet)-[:SENT]->(:Transaction)-[:TO]->(w)
+    WITH outs, collect(DISTINCT inc.address) AS ins
+    UNWIND (outs + ins) AS addr
+    RETURN count(DISTINCT addr) AS unique_interactions
+}
+CALL {
+    WITH w
+    OPTIONAL MATCH (w)-[:SENT]->(tx1:Transaction)
+    RETURN min(tx1.timestamp) AS out_min, max(tx1.timestamp) AS out_max
+}
+CALL {
+    WITH w
+    OPTIONAL MATCH (:Wallet)-[:SENT]->(tx2:Transaction)-[:TO]->(w)
+    RETURN min(tx2.timestamp) AS in_min, max(tx2.timestamp) AS in_max
+}
+WITH w, sent_count, total_sent, recv_count, total_received, unique_interactions,
+     coalesce(CASE WHEN out_min IS NOT NULL AND in_min IS NOT NULL
+                   THEN CASE WHEN out_min < in_min THEN out_min ELSE in_min END
+                   WHEN out_min IS NOT NULL THEN out_min ELSE in_min END, null) AS first_seen,
+     coalesce(CASE WHEN out_max IS NOT NULL AND in_max IS NOT NULL
+                   THEN CASE WHEN out_max > in_max THEN out_max ELSE in_max END
+                   WHEN out_max IS NOT NULL THEN out_max ELSE in_max END, null) AS last_seen
+RETURN w.address AS address,
+       w.balance AS balance,
+       w.staked AS staked,
+       w.staking_rewards AS staking_rewards,
+       w.risk_score AS risk_score,
+       w.labels AS labels,
+       first_seen, last_seen,
+       sent_count, total_sent, recv_count, total_received,
+       unique_interactions
+"""
+
+
+# ── RPC helpers (async) ─────────────────────────────────────────────────
+
+async def _rpc_call(method: str, params: list) -> dict | None:
+    """Async JSON-RPC call to Monad."""
     try:
-        resp = httpx.post(
+        client = _get_client()
+        resp = await client.post(
             settings.monad_rpc_url,
             json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1},
-            timeout=10,
         )
         data = resp.json()
         return data.get("result")
@@ -61,15 +131,33 @@ def _rpc_call(method: str, params: list) -> dict | None:
         return None
 
 
-def _get_balance(address: str) -> float | None:
-    result = _rpc_call("eth_getBalance", [address, "latest"])
+async def _rpc_batch(calls: list[tuple[str, list]]) -> list[dict | None]:
+    """Batch multiple JSON-RPC calls into a single HTTP request."""
+    if not calls:
+        return []
+    batch = [
+        {"jsonrpc": "2.0", "method": method, "params": params, "id": i}
+        for i, (method, params) in enumerate(calls)
+    ]
+    try:
+        client = _get_client()
+        resp = await client.post(settings.monad_rpc_url, json=batch, timeout=15)
+        results = resp.json()
+        results.sort(key=lambda r: r["id"])
+        return [r.get("result") for r in results]
+    except Exception:
+        return [None] * len(calls)
+
+
+async def _get_balance(address: str) -> float | None:
+    result = await _rpc_call("eth_getBalance", [address, "latest"])
     if result:
         return int(result, 16) / 1e18
     return None
 
 
-def _get_tx_count(address: str) -> int:
-    result = _rpc_call("eth_getTransactionCount", [address, "latest"])
+async def _get_tx_count(address: str) -> int:
+    result = await _rpc_call("eth_getTransactionCount", [address, "latest"])
     if result:
         return int(result, 16)
     return 0
@@ -77,40 +165,34 @@ def _get_tx_count(address: str) -> int:
 
 STAKING_CONTRACT = "0x0000000000000000000000000000000000001000"
 GET_DELEGATOR_SELECTOR = "0x573c1ce0"
-# getDelegations(address, uint64 startValidatorId) → returns up to 100 delegations
 GET_DELEGATIONS_SELECTOR = "0x4fd66050"
 
 
-def _get_staking_info(address: str) -> list[dict]:
+async def _get_staking_info(address: str) -> list[dict]:
     """Query Monad staking precompile for delegation info.
 
-    Tries validators 1-20 (covers most cases). Returns list of active stakes.
+    Uses a single batched RPC call for all 20 validators instead of
+    20 sequential calls (~10x faster).
     """
-    stakes = []
     addr_padded = address.lower().replace("0x", "").zfill(40)
+    addr_hex = "000000000000000000000000" + addr_padded
 
-    # Try getDelegations first (returns paginated list)
-    data = GET_DELEGATIONS_SELECTOR + "000000000000000000000000" + addr_padded + "0" * 64
-    result = _rpc_call("eth_call", [{"to": STAKING_CONTRACT, "data": data}, "latest"])
-
-    if result and result != "0x" and len(result) > 66:
-        # Parse the response — it returns an array of (validatorId, stake) tuples
-        # For now, fall back to individual validator queries
-        pass
-
-    # Fallback: check validators 1-20 individually
+    # Build batch: 20 eth_call requests for validators 1-20
+    calls: list[tuple[str, list]] = []
     for val_id in range(1, 21):
         val_hex = hex(val_id)[2:].zfill(64)
-        addr_hex = "000000000000000000000000" + addr_padded
         data = GET_DELEGATOR_SELECTOR + val_hex + addr_hex
+        calls.append(("eth_call", [{"to": STAKING_CONTRACT, "data": data}, "latest"]))
 
-        result = _rpc_call("eth_call", [{"to": STAKING_CONTRACT, "data": data}, "latest"])
+    results = await _rpc_batch(calls)
+
+    stakes = []
+    for val_id, result in enumerate(results, start=1):
         if not result or result == "0x" or len(result) < 130:
             continue
 
-        # Decode: chunk0 = staked amount, chunk2 = unclaimed rewards
         hex_data = result[2:]
-        chunks = [hex_data[i:i+64] for i in range(0, len(hex_data), 64)]
+        chunks = [hex_data[i:i + 64] for i in range(0, len(hex_data), 64)]
         if len(chunks) < 3:
             continue
 
@@ -127,16 +209,14 @@ def _get_staking_info(address: str) -> list[dict]:
     return stakes
 
 
-def _get_txs_from_monadscan(address: str, limit: int = 50) -> list[dict] | None:
-    """Fetch transaction history from Monadscan (Etherscan V2 API).
-
-    Returns list of tx dicts, or None if API is unavailable.
-    """
+async def _get_txs_from_monadscan(address: str, limit: int = 50) -> list[dict] | None:
+    """Fetch transaction history from Monadscan (Etherscan V2 API)."""
     if not settings.monadscan_api_key:
         return None
 
     try:
-        resp = httpx.get(
+        client = _get_client()
+        resp = await client.get(
             settings.monadscan_api_url,
             params={
                 "chainid": settings.monadscan_chain_id,
@@ -174,7 +254,7 @@ def _get_txs_from_monadscan(address: str, limit: int = 50) -> list[dict] | None:
         return None
 
 
-def _get_recent_txs(address: str, limit: int = 50) -> list[dict]:
+async def _get_recent_txs(address: str, limit: int = 50) -> list[dict]:
     """Get transactions for an address.
 
     Priority:
@@ -184,7 +264,7 @@ def _get_recent_txs(address: str, limit: int = 50) -> list[dict]:
     address = address.lower()
 
     # Try Monadscan first
-    monadscan_txs = _get_txs_from_monadscan(address, limit)
+    monadscan_txs = await _get_txs_from_monadscan(address, limit)
     if monadscan_txs is not None:
         return monadscan_txs
 
@@ -192,15 +272,18 @@ def _get_recent_txs(address: str, limit: int = 50) -> list[dict]:
     txs: list[dict] = []
     seen_hashes: set[str] = set()
 
-    latest_hex = _rpc_call("eth_blockNumber", [])
-    nonce_count = _get_tx_count(address)
+    latest_hex = await _rpc_call("eth_blockNumber", [])
+    if not latest_hex:
+        return []
+
+    nonce_count = await _get_tx_count(address)
     if nonce_count > 0 and nonce_count <= 20:
-        latest_block = int(latest_hex, 16) if latest_hex else 0
+        latest_block = int(latest_hex, 16)
         for target_n in range(1, nonce_count + 1):
-            block_num = _binary_search_nonce_block(address, 0, latest_block, target_nonce=target_n)
+            block_num = await _binary_search_nonce_block(address, 0, latest_block, target_nonce=target_n)
             if block_num is None:
                 continue
-            block = _rpc_call("eth_getBlockByNumber", [hex(block_num), True])
+            block = await _rpc_call("eth_getBlockByNumber", [hex(block_num), True])
             if not block:
                 continue
             timestamp = int(block["timestamp"], 16)
@@ -230,38 +313,28 @@ def _get_recent_txs(address: str, limit: int = 50) -> list[dict]:
     return txs[:limit]
 
 
-def _find_staking_txs(address: str) -> list[dict]:
-    """Find staking delegation transactions for a wallet.
-
-    Approach: if the wallet has staking positions, we know they interacted
-    with the staking contract. Use eth_getLogs with narrow binary-search
-    to find the delegation events without scanning millions of blocks.
-    """
+async def _find_staking_txs(address: str) -> list[dict]:
+    """Find staking delegation transactions for a wallet."""
     address = address.lower()
     addr_padded = "0x000000000000000000000000" + address.replace("0x", "")
     delegation_topic = "0xe4d4df1e1827dd28252fd5c3cd7ebccd3da6e0aa31f74c828f3c8542af49d840"
 
-    latest_hex = _rpc_call("eth_blockNumber", [])
+    latest_hex = await _rpc_call("eth_blockNumber", [])
     if not latest_hex:
         return []
 
     latest = int(latest_hex, 16)
     txs = []
 
-    # Binary search: find which 100-block window contains the delegation event.
-    # Start by checking progressively larger ranges from the end,
-    # then narrow down. Most staking txs happened in the last few million blocks.
-    # Try recent first, then expand backwards in exponential jumps.
     found_range = None
     search_start = max(latest - 100, 0)
 
-    # Exponential backoff search: 100, 200, 400, 800... blocks from tip
     step = 100
     while search_start >= 0 and step <= 200_000_000:
         from_block = max(search_start - step, 0)
-        to_block = min(from_block + 99, latest)  # 100-block window
+        to_block = min(from_block + 99, latest)
 
-        result = _rpc_call("eth_getLogs", [{
+        result = await _rpc_call("eth_getLogs", [{
             "fromBlock": hex(from_block),
             "toBlock": hex(to_block),
             "address": STAKING_CONTRACT,
@@ -272,19 +345,13 @@ def _find_staking_txs(address: str) -> list[dict]:
             found_range = (from_block, to_block)
             break
 
-        # Jump backwards exponentially
         search_start -= step
         step *= 2
 
-    # If exponential search didn't find it, try a smarter approach:
-    # The nonce is low, so the tx is probably early in the wallet's life.
-    # Use eth_getTransactionCount at different blocks to binary-search
-    # for the block where nonce went from 0->1.
     if not found_range:
-        tx_block = _binary_search_nonce_block(address, 0, latest)
+        tx_block = await _binary_search_nonce_block(address, 0, latest)
         if tx_block is not None:
-            # Found the block, now get the tx from it
-            block = _rpc_call("eth_getBlockByNumber", [hex(tx_block), True])
+            block = await _rpc_call("eth_getBlockByNumber", [hex(tx_block), True])
             if block:
                 timestamp = int(block["timestamp"], 16)
                 for tx in block.get("transactions", []):
@@ -307,8 +374,7 @@ def _find_staking_txs(address: str) -> list[dict]:
     if not found_range:
         return []
 
-    # We found events in a 100-block window — extract tx details
-    result = _rpc_call("eth_getLogs", [{
+    result = await _rpc_call("eth_getLogs", [{
         "fromBlock": hex(found_range[0]),
         "toBlock": hex(found_range[1]),
         "address": STAKING_CONTRACT,
@@ -322,14 +388,14 @@ def _find_staking_txs(address: str) -> list[dict]:
         tx_hash = log.get("transactionHash")
         if not tx_hash:
             continue
-        tx = _rpc_call("eth_getTransactionByHash", [tx_hash])
+        tx = await _rpc_call("eth_getTransactionByHash", [tx_hash])
         if not tx:
             continue
         block_ts_hex = log.get("blockTimestamp")
         if block_ts_hex:
             timestamp = int(block_ts_hex, 16)
         else:
-            block = _rpc_call("eth_getBlockByNumber", [log["blockNumber"], False])
+            block = await _rpc_call("eth_getBlockByNumber", [log["blockNumber"], False])
             timestamp = int(block["timestamp"], 16) if block else 0
 
         value_wei = int(tx.get("value", "0x0"), 16)
@@ -347,21 +413,14 @@ def _find_staking_txs(address: str) -> list[dict]:
     return txs
 
 
-def _binary_search_nonce_block(
+async def _binary_search_nonce_block(
     address: str, low: int, high: int, target_nonce: int = 1
 ) -> int | None:
-    """Binary search to find the block where an address's nonce changed to target_nonce.
-
-    Returns the block number where the nonce first equals target_nonce, or None.
-    Requires ~log2(block_range) RPC calls (~27 calls for 100M blocks).
-    """
-    # First check current nonce is at least target_nonce
-    result = _rpc_call("eth_getTransactionCount", [address, hex(high)])
+    """Binary search to find the block where an address's nonce changed."""
+    result = await _rpc_call("eth_getTransactionCount", [address, hex(high)])
     if not result or int(result, 16) < target_nonce:
         return None
 
-    # Find a valid low block where nonce is 0.
-    # Monad mainnet genesis is around block 66M, so probe to find a valid start.
     found_low = False
     for candidate in [
         low, 1, 1_000_000, 10_000_000, 50_000_000,
@@ -369,20 +428,19 @@ def _binary_search_nonce_block(
     ]:
         if candidate > high:
             continue
-        result = _rpc_call("eth_getTransactionCount", [address, hex(candidate)])
+        result = await _rpc_call("eth_getTransactionCount", [address, hex(candidate)])
         if result is not None:
             if int(result, 16) >= target_nonce:
-                return candidate  # Already had the nonce at this early block
+                return candidate
             low = candidate
             found_low = True
             break
     if not found_low:
-        return None  # Couldn't find a valid starting block
+        return None
 
-    # Binary search
     while low < high:
         mid = (low + high) // 2
-        result = _rpc_call("eth_getTransactionCount", [address, hex(mid)])
+        result = await _rpc_call("eth_getTransactionCount", [address, hex(mid)])
         if not result:
             return None
         nonce_at_mid = int(result, 16)
@@ -401,10 +459,11 @@ class ScanRequest(BaseModel):
     end_ts: int | None = None
 
 
-def _timestamp_to_block(ts: int) -> int | None:
+async def _timestamp_to_block(ts: int) -> int | None:
     """Convert a Unix timestamp to a block number via Monadscan API."""
     try:
-        resp = httpx.get(
+        client = _get_client()
+        resp = await client.get(
             settings.monadscan_api_url,
             params={
                 "chainid": settings.monadscan_chain_id,
@@ -424,17 +483,18 @@ def _timestamp_to_block(ts: int) -> int | None:
     return None
 
 
-def _get_txs_from_monadscan_range(
+async def _get_txs_from_monadscan_range(
     address: str, start_block: int = 0, end_block: int = 99999999, max_pages: int = 5,
 ) -> list[dict]:
     """Fetch transactions from Monadscan with block range and pagination."""
     if not settings.monadscan_api_key:
         return []
+    client = _get_client()
     all_txs = []
     page = 1
     while page <= max_pages:
         try:
-            resp = httpx.get(
+            resp = await client.get(
                 settings.monadscan_api_url,
                 params={
                     "chainid": settings.monadscan_chain_id,
@@ -487,75 +547,28 @@ async def scan_wallet(address: str, body: ScanRequest | None = None):
     start_block = 0
     end_block = 99999999
     if body.start_ts:
-        b = _timestamp_to_block(body.start_ts)
+        b = await _timestamp_to_block(body.start_ts)
         if b is not None:
             start_block = b
     if body.end_ts:
-        b = _timestamp_to_block(body.end_ts)
+        b = await _timestamp_to_block(body.end_ts)
         if b is not None:
             end_block = b
 
     # Fetch with pagination (up to 5000 txs)
-    txs = _get_txs_from_monadscan_range(address, start_block, end_block, max_pages=5)
+    txs = await _get_txs_from_monadscan_range(address, start_block, end_block, max_pages=5)
     indexed_count = 0
     if txs:
         from app.background_index import _index_transactions
-        _index_transactions(txs)
+        await asyncio.to_thread(_index_transactions, txs)
         indexed_count = len(txs)
 
     # Re-fetch wallet summary (now from Neo4j with fresh data)
-    balance = _get_balance(address)
-    staking = _get_staking_info(address)
+    balance = await _get_balance(address)
+    staking = await _get_staking_info(address)
 
-    # Re-query the newly indexed data (separate subqueries to avoid cross-product)
-    result = db.query(
-        """
-        MATCH (w:Wallet {address: $address})
-        CALL {
-            WITH w
-            OPTIONAL MATCH (w)-[:SENT]->(tx_out:Transaction)-[:TO]->(other_out:Wallet)
-            RETURN count(tx_out) AS sent_count,
-                   coalesce(sum(tx_out.value), 0.0) AS total_sent
-        }
-        CALL {
-            WITH w
-            OPTIONAL MATCH (sender:Wallet)-[:SENT]->(tx_in:Transaction)-[:TO]->(w)
-            RETURN count(tx_in) AS recv_count,
-                   coalesce(sum(tx_in.value), 0.0) AS total_received
-        }
-        CALL {
-            WITH w
-            OPTIONAL MATCH (w)-[:SENT]->(:Transaction)-[:TO]->(out:Wallet)
-            WITH w, collect(DISTINCT out.address) AS outs
-            OPTIONAL MATCH (inc:Wallet)-[:SENT]->(:Transaction)-[:TO]->(w)
-            WITH outs, collect(DISTINCT inc.address) AS ins
-            UNWIND (outs + ins) AS addr
-            RETURN count(DISTINCT addr) AS unique_interactions
-        }
-        CALL {
-            WITH w
-            OPTIONAL MATCH (w)-[:SENT]->(tx1:Transaction)
-            RETURN min(tx1.timestamp) AS out_min, max(tx1.timestamp) AS out_max
-        }
-        CALL {
-            WITH w
-            OPTIONAL MATCH (:Wallet)-[:SENT]->(tx2:Transaction)-[:TO]->(w)
-            RETURN min(tx2.timestamp) AS in_min, max(tx2.timestamp) AS in_max
-        }
-        WITH w, sent_count, total_sent, recv_count, total_received, unique_interactions,
-             coalesce(CASE WHEN out_min IS NOT NULL AND in_min IS NOT NULL
-                           THEN CASE WHEN out_min < in_min THEN out_min ELSE in_min END
-                           WHEN out_min IS NOT NULL THEN out_min ELSE in_min END, null) AS first_seen,
-             coalesce(CASE WHEN out_max IS NOT NULL AND in_max IS NOT NULL
-                           THEN CASE WHEN out_max > in_max THEN out_max ELSE in_max END
-                           WHEN out_max IS NOT NULL THEN out_max ELSE in_max END, null) AS last_seen
-        RETURN w.address AS address,
-               first_seen, last_seen,
-               sent_count, total_sent, recv_count, total_received,
-               unique_interactions
-        """,
-        {"address": address},
-    )
+    # Re-query the newly indexed data using shared Cypher
+    result = await asyncio.to_thread(db.query, _WALLET_SUMMARY_CYPHER, {"address": address})
 
     if result and result[0].get("address"):
         r = result[0]
@@ -585,7 +598,8 @@ async def batch_wallet_stats(addresses: list[str]):
     Fast enough for favourites lists.
     """
     addrs = [a.lower() for a in addresses[:50]]  # cap at 50
-    result = db.query(
+    result = await asyncio.to_thread(
+        db.query,
         """
         UNWIND $addrs AS addr
         OPTIONAL MATCH (w:Wallet {address: addr})
@@ -622,73 +636,18 @@ async def get_wallet(address: str):
     """Look up a wallet — checks indexed data first, falls back to live RPC."""
     address = address.lower()
 
-    # Try indexed data first (separate subqueries to avoid cross-product)
-    result = db.query(
-        """
-        MATCH (w:Wallet {address: $address})
-        CALL {
-            WITH w
-            OPTIONAL MATCH (w)-[:SENT]->(tx_out:Transaction)-[:TO]->(other_out:Wallet)
-            RETURN count(tx_out) AS sent_count,
-                   coalesce(sum(tx_out.value), 0.0) AS total_sent
-        }
-        CALL {
-            WITH w
-            OPTIONAL MATCH (sender:Wallet)-[:SENT]->(tx_in:Transaction)-[:TO]->(w)
-            RETURN count(tx_in) AS recv_count,
-                   coalesce(sum(tx_in.value), 0.0) AS total_received
-        }
-        CALL {
-            WITH w
-            OPTIONAL MATCH (w)-[:SENT]->(:Transaction)-[:TO]->(out:Wallet)
-            WITH w, collect(DISTINCT out.address) AS outs
-            OPTIONAL MATCH (inc:Wallet)-[:SENT]->(:Transaction)-[:TO]->(w)
-            WITH outs, collect(DISTINCT inc.address) AS ins
-            UNWIND (outs + ins) AS addr
-            RETURN count(DISTINCT addr) AS unique_interactions
-        }
-        CALL {
-            WITH w
-            OPTIONAL MATCH (w)-[:SENT]->(tx1:Transaction)
-            RETURN min(tx1.timestamp) AS out_min, max(tx1.timestamp) AS out_max
-        }
-        CALL {
-            WITH w
-            OPTIONAL MATCH (:Wallet)-[:SENT]->(tx2:Transaction)-[:TO]->(w)
-            RETURN min(tx2.timestamp) AS in_min, max(tx2.timestamp) AS in_max
-        }
-        WITH w, sent_count, total_sent, recv_count, total_received, unique_interactions,
-             coalesce(CASE WHEN out_min IS NOT NULL AND in_min IS NOT NULL
-                           THEN CASE WHEN out_min < in_min THEN out_min ELSE in_min END
-                           WHEN out_min IS NOT NULL THEN out_min ELSE in_min END, null) AS first_seen,
-             coalesce(CASE WHEN out_max IS NOT NULL AND in_max IS NOT NULL
-                           THEN CASE WHEN out_max > in_max THEN out_max ELSE in_max END
-                           WHEN out_max IS NOT NULL THEN out_max ELSE in_max END, null) AS last_seen
-        RETURN w.address AS address,
-               first_seen, last_seen,
-               w.risk_score AS risk_score,
-               w.labels AS labels,
-               sent_count, total_sent, recv_count, total_received,
-               unique_interactions
-        """,
-        {"address": address},
-    )
+    # Try indexed data first — single query includes cached balance/staking
+    result = await asyncio.to_thread(db.query, _WALLET_SUMMARY_CYPHER, {"address": address})
 
     if result and result[0].get("address"):
         r = result[0]
-        # Use cached balance/staking from Neo4j node — no RPC calls on page load
-        cached = db.query(
-            "MATCH (w:Wallet {address: $address}) RETURN w.balance AS balance, w.staked AS staked, w.staking_rewards AS rewards",
-            {"address": address},
-        )
-        c = cached[0] if cached else {}
         # Build staking list from cached data
         staking_list = []
-        if c.get("staked") and c["staked"] > 0:
-            staking_list = [{"validator_id": 0, "staked": c["staked"], "rewards": c.get("rewards") or 0.0}]
+        if r.get("staked") and r["staked"] > 0:
+            staking_list = [{"validator_id": 0, "staked": r["staked"], "rewards": r.get("staking_rewards") or 0.0}]
         return WalletSummary(
             address=r["address"],
-            balance=c.get("balance"),
+            balance=r.get("balance"),
             tx_count=(r["sent_count"] or 0) + (r["recv_count"] or 0),
             total_sent=r["total_sent"] or 0.0,
             total_received=r["total_received"] or 0.0,
@@ -717,7 +676,8 @@ async def get_wallet_transactions(address: str, limit: int = 50):
     address = address.lower()
 
     # Try indexed data
-    result = db.query(
+    result = await asyncio.to_thread(
+        db.query,
         """
         MATCH (from:Wallet)-[:SENT]->(tx:Transaction)-[:TO]->(to:Wallet)
         WHERE from.address = $address OR to.address = $address
@@ -748,26 +708,18 @@ async def get_wallet_graph(address: str, depth: int = 2, limit: int = 100):
     depth = min(depth, 4)  # cap to prevent explosion
     rel_depth = depth * 2  # each logical hop is SENT + TO
 
-    result = db.query(
-        """
-        MATCH path = (start:Wallet {address: $address})
-              -[:SENT|TO*1..%d]-(end:Wallet)
-        WHERE start <> end
-        WITH path
-        LIMIT $limit
-        UNWIND relationships(path) AS r
-        WITH DISTINCT r
-        WHERE type(r) = 'TO'  // only show completed transfers
-        WITH startNode(r) AS tx, endNode(r) AS to_wallet
-        MATCH (from_wallet:Wallet)-[:SENT]->(tx)
-        RETURN DISTINCT
-          from_wallet.address AS from_addr,
-          to_wallet.address AS to_addr,
-          tx.hash AS tx_hash,
-          tx.value AS value,
-          tx.timestamp AS timestamp
-        """
-        % rel_depth,
+    # Pre-built queries for each valid depth to avoid string interpolation in Cypher
+    _GRAPH_QUERIES = {
+        2: "MATCH path = (start:Wallet {address: $address})-[:SENT|TO*1..2]-(end:Wallet) WHERE start <> end WITH path LIMIT $limit UNWIND relationships(path) AS r WITH DISTINCT r WHERE type(r) = 'TO' WITH startNode(r) AS tx, endNode(r) AS to_wallet MATCH (from_wallet:Wallet)-[:SENT]->(tx) RETURN DISTINCT from_wallet.address AS from_addr, to_wallet.address AS to_addr, tx.hash AS tx_hash, tx.value AS value, tx.timestamp AS timestamp",
+        4: "MATCH path = (start:Wallet {address: $address})-[:SENT|TO*1..4]-(end:Wallet) WHERE start <> end WITH path LIMIT $limit UNWIND relationships(path) AS r WITH DISTINCT r WHERE type(r) = 'TO' WITH startNode(r) AS tx, endNode(r) AS to_wallet MATCH (from_wallet:Wallet)-[:SENT]->(tx) RETURN DISTINCT from_wallet.address AS from_addr, to_wallet.address AS to_addr, tx.hash AS tx_hash, tx.value AS value, tx.timestamp AS timestamp",
+        6: "MATCH path = (start:Wallet {address: $address})-[:SENT|TO*1..6]-(end:Wallet) WHERE start <> end WITH path LIMIT $limit UNWIND relationships(path) AS r WITH DISTINCT r WHERE type(r) = 'TO' WITH startNode(r) AS tx, endNode(r) AS to_wallet MATCH (from_wallet:Wallet)-[:SENT]->(tx) RETURN DISTINCT from_wallet.address AS from_addr, to_wallet.address AS to_addr, tx.hash AS tx_hash, tx.value AS value, tx.timestamp AS timestamp",
+        8: "MATCH path = (start:Wallet {address: $address})-[:SENT|TO*1..8]-(end:Wallet) WHERE start <> end WITH path LIMIT $limit UNWIND relationships(path) AS r WITH DISTINCT r WHERE type(r) = 'TO' WITH startNode(r) AS tx, endNode(r) AS to_wallet MATCH (from_wallet:Wallet)-[:SENT]->(tx) RETURN DISTINCT from_wallet.address AS from_addr, to_wallet.address AS to_addr, tx.hash AS tx_hash, tx.value AS value, tx.timestamp AS timestamp",
+    }
+    cypher = _GRAPH_QUERIES.get(rel_depth, _GRAPH_QUERIES[4])
+
+    result = await asyncio.to_thread(
+        db.query,
+        cypher,
         {"address": address, "limit": limit},
     )
 
@@ -789,7 +741,8 @@ async def get_wallet_graph(address: str, depth: int = 2, limit: int = 100):
     # Enrich nodes with wallet stats from Neo4j
     if nodes:
         addrs = list(nodes.keys())
-        stats = db.query(
+        stats = await asyncio.to_thread(
+            db.query,
             """
             UNWIND $addrs AS addr
             MATCH (w:Wallet {address: addr})
@@ -819,7 +772,7 @@ async def get_wallet_graph(address: str, depth: int = 2, limit: int = 100):
 
     # If no graph data indexed, build graph from Monadscan tx data
     if not nodes:
-        monadscan_txs = _get_txs_from_monadscan(address, limit=50)
+        monadscan_txs = await _get_txs_from_monadscan(address, limit=50)
         if monadscan_txs:
             nodes[address] = {"address": address}
             for tx in monadscan_txs:

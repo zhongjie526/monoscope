@@ -1,41 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Star, Trash2, Pencil, Check, X, Copy } from 'lucide-react';
+import { Star, Trash2, Pencil, Check, X } from 'lucide-react';
 import { getFavourites, removeFavourite, updateNickname } from '../stores/favourites';
 import { getBatchWalletStats } from '../services/api';
+import CopyButton from '../components/CopyButton';
+import { formatMON } from '../utils/format';
 import type { BatchWalletStats } from '../services/api';
 import type { FavouriteWallet } from '../stores/favourites';
-
-function CopyBtn({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }}
-      title={copied ? 'Copied!' : 'Copy address'}
-      style={{
-        background: 'none',
-        border: 'none',
-        cursor: 'pointer',
-        padding: 2,
-        color: copied ? '#22c55e' : 'var(--text-muted)',
-        display: 'inline-flex',
-        alignItems: 'center',
-      }}
-    >
-      {copied ? <Check size={13} /> : <Copy size={13} />}
-    </button>
-  );
-}
-
-function formatMON(value: number) {
-  if (value >= 1000) return `${(value / 1000).toFixed(2)}K`;
-  return value.toFixed(4);
-}
 
 interface FavRow extends FavouriteWallet {
   stats: BatchWalletStats | null;
@@ -176,7 +147,7 @@ export default function Favourites() {
                     <span className="address" style={{ fontSize: 13 }}>
                       {r.address.slice(0, 14)}…{r.address.slice(-10)}
                     </span>
-                    <CopyBtn text={r.address} />
+                    <CopyButton text={r.address} />
                   </div>
                 </div>
               </div>

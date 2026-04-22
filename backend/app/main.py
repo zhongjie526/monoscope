@@ -52,7 +52,7 @@ async def root():
 @app.get("/health")
 async def health():
     try:
-        result = db.query("RETURN 1 AS ok")
+        result = await db.aquery("RETURN 1 AS ok")
         neo4j_ok = len(result) > 0
     except Exception:
         neo4j_ok = False

@@ -17,7 +17,7 @@ export interface WalletSummary {
   last_seen: number | null;
   risk_score: number | null;
   labels: string[];
-  source: 'indexed' | 'rpc';
+  source: 'indexed' | 'rpc' | 'not_indexed';
   staking: StakingInfo[];
 }
 

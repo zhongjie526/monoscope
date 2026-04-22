@@ -4,7 +4,11 @@ All queries traverse the canonical graph path:
   Wallet -[:SENT]-> Transaction -[:TO]-> Wallet
 
 Aggregation is done inline via Cypher — no redundant summary edges needed.
+Results are cached in-memory with a short TTL to avoid repeated full scans.
 """
+
+import time
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -12,6 +16,23 @@ from pydantic import BaseModel
 from app.database import db
 
 router = APIRouter()
+
+# ── Simple TTL cache for fraud scans ────────────────────────────────────
+
+_cache: dict[str, tuple[float, Any]] = {}  # key -> (expires_at, data)
+CACHE_TTL = 60  # seconds
+
+
+def _get_cached(key: str) -> Any | None:
+    entry = _cache.get(key)
+    if entry and entry[0] > time.monotonic():
+        return entry[1]
+    _cache.pop(key, None)
+    return None
+
+
+def _set_cached(key: str, data: Any):
+    _cache[key] = (time.monotonic() + CACHE_TTL, data)
 
 
 class FraudAlert(BaseModel):
@@ -34,7 +55,12 @@ class WalletRisk(BaseModel):
 @router.get("/wash-trading", response_model=list[FraudAlert])
 async def detect_wash_trading(min_round_trips: int = 2):
     """Detect bidirectional fund flows (A⇄B) — wash trading signal."""
-    result = db.query(
+    cache_key = f"wash:{min_round_trips}"
+    cached = _get_cached(cache_key)
+    if cached is not None:
+        return cached
+
+    result = await db.aquery(
         """
         MATCH (a:Wallet)-[:SENT]->(tx1:Transaction)-[:TO]->(b:Wallet)
         WHERE a.address < b.address
@@ -72,6 +98,7 @@ async def detect_wash_trading(min_round_trips: int = 2):
                 },
             )
         )
+    _set_cached(cache_key, alerts)
     return alerts
 
 
@@ -80,7 +107,12 @@ async def detect_wash_trading(min_round_trips: int = 2):
 @router.get("/sybil-clusters", response_model=list[FraudAlert])
 async def detect_sybil_clusters(min_cluster_size: int = 5):
     """Detect wallets that funded many other wallets (fan-out pattern)."""
-    result = db.query(
+    cache_key = f"sybil:{min_cluster_size}"
+    cached = _get_cached(cache_key)
+    if cached is not None:
+        return cached
+
+    result = await db.aquery(
         """
         MATCH (funder:Wallet)-[:SENT]->(:Transaction)-[:TO]->(funded:Wallet)
         WITH funder, count(DISTINCT funded) AS cluster_size,
@@ -110,6 +142,7 @@ async def detect_sybil_clusters(min_cluster_size: int = 5):
                 },
             )
         )
+    _set_cached(cache_key, alerts)
     return alerts
 
 
@@ -118,7 +151,12 @@ async def detect_sybil_clusters(min_cluster_size: int = 5):
 @router.get("/high-velocity", response_model=list[FraudAlert])
 async def detect_high_velocity(min_txs_per_hour: int = 60):
     """Detect wallets with bot-like transaction velocity."""
-    result = db.query(
+    cache_key = f"velocity:{min_txs_per_hour}"
+    cached = _get_cached(cache_key)
+    if cached is not None:
+        return cached
+
+    result = await db.aquery(
         """
         MATCH (w:Wallet)-[:SENT]->(tx:Transaction)
         WITH w, count(tx) AS total_txs
@@ -153,6 +191,7 @@ async def detect_high_velocity(min_txs_per_hour: int = 60):
                 },
             )
         )
+    _set_cached(cache_key, alerts)
     return alerts
 
 
@@ -163,7 +202,7 @@ async def get_wallet_risk(address: str):
     """Calculate risk score from transaction patterns."""
     address = address.lower()
 
-    result = db.query(
+    result = await db.aquery(
         """
         MATCH (w:Wallet {address: $address})
 

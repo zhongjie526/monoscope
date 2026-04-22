@@ -173,15 +173,14 @@ def index_block(block: dict, client: httpx.Client):
                 WHEN to.last_seen IS NULL OR to.last_seen < $timestamp
                 THEN $timestamp ELSE to.last_seen END
 
-            CREATE (tx:Transaction {
-                hash: t.tx_hash,
-                value: t.value,
-                block_number: $block_number,
-                timestamp: $timestamp,
-                method: t.method
-            })
-            CREATE (from)-[:SENT]->(tx)
-            CREATE (tx)-[:TO]->(to)
+            MERGE (tx:Transaction {hash: t.tx_hash})
+            ON CREATE SET tx.value = t.value,
+                          tx.block_number = $block_number,
+                          tx.timestamp = $timestamp,
+                          tx.method = t.method
+
+            MERGE (from)-[:SENT]->(tx)
+            MERGE (tx)-[:TO]->(to)
             """,
             {
                 "block_number": block_number,
@@ -210,14 +209,13 @@ def index_block(block: dict, client: httpx.Client):
             MERGE (c:Contract {address: d.contract_addr})
             ON CREATE SET c.created_at = $timestamp, c.creator = d.from_addr
 
-            CREATE (tx:Transaction {
-                hash: d.tx_hash,
-                block_number: $block_number,
-                timestamp: $timestamp,
-                method: 'deploy'
-            })
-            CREATE (from)-[:SENT]->(tx)
-            CREATE (tx)-[:DEPLOYED]->(c)
+            MERGE (tx:Transaction {hash: d.tx_hash})
+            ON CREATE SET tx.block_number = $block_number,
+                          tx.timestamp = $timestamp,
+                          tx.method = 'deploy'
+
+            MERGE (from)-[:SENT]->(tx)
+            MERGE (tx)-[:DEPLOYED]->(c)
             """,
             {
                 "block_number": block_number,

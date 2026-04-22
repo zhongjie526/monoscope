@@ -3,14 +3,19 @@
 When a wallet is looked up via RPC fallback, we get its tx history from
 Monadscan. This module ingests those transactions into Neo4j in the
 background so subsequent graph queries work without the API.
+
+Uses a bounded ThreadPoolExecutor to prevent thread pile-up if Neo4j is slow.
 """
 
 import logging
-import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from app.database import db
 
 logger = logging.getLogger(__name__)
+
+# Bounded pool — at most 4 concurrent background writes
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="bg-index")
 
 
 def index_transactions_background(txs: list[dict]):
@@ -18,11 +23,11 @@ def index_transactions_background(txs: list[dict]):
 
     Each tx dict has: hash, block_number, timestamp, from_addr, to_addr, value, method.
     Uses MERGE to avoid duplicates — safe to call repeatedly.
+    Runs in a bounded thread pool to prevent pile-up.
     """
     if not txs:
         return
-    thread = threading.Thread(target=_index_transactions, args=(txs,), daemon=True)
-    thread.start()
+    _executor.submit(_index_transactions, txs)
 
 
 def _index_transactions(txs: list[dict]):
@@ -88,11 +93,9 @@ def enrich_wallet_background(address: str, stats: dict):
 
     stats dict should have: balance, tx_count, total_sent, total_received,
     unique_interactions, first_seen, last_seen, staking (list).
+    Runs in a bounded thread pool to prevent pile-up.
     """
-    thread = threading.Thread(
-        target=_enrich_wallet, args=(address, stats), daemon=True
-    )
-    thread.start()
+    _executor.submit(_enrich_wallet, address, stats)
 
 
 def _enrich_wallet(address: str, stats: dict):

@@ -1,4 +1,12 @@
-"""Neo4j database connection and schema setup."""
+"""Neo4j database connection and schema setup.
+
+Provides both sync (query/write) and async (aquery/awrite) interfaces.
+The sync methods are used by the indexer and background threads.
+The async methods use asyncio.to_thread() to avoid blocking the event loop
+and should be used by all FastAPI endpoint handlers.
+"""
+
+import asyncio
 
 from neo4j import GraphDatabase
 from app.config import settings
@@ -65,17 +73,28 @@ class Neo4jDB:
                 "CREATE INDEX IF NOT EXISTS FOR (w:Wallet) ON (w.risk_score)"
             )
 
+    # ── Sync interface (for indexer / background threads) ────────────
 
     def query(self, cypher: str, params: dict | None = None) -> list[dict]:
-        """Run a read query and return list of record dicts."""
+        """Run a read query and return list of record dicts (sync)."""
         with self._session() as session:
             result = session.run(cypher, params or {})
             return [record.data() for record in result]
 
     def write(self, cypher: str, params: dict | None = None):
-        """Run a write query."""
+        """Run a write query (sync)."""
         with self._session() as session:
             session.run(cypher, params or {})
+
+    # ── Async interface (for FastAPI endpoints) ─────────────────────
+
+    async def aquery(self, cypher: str, params: dict | None = None) -> list[dict]:
+        """Run a read query without blocking the event loop."""
+        return await asyncio.to_thread(self.query, cypher, params)
+
+    async def awrite(self, cypher: str, params: dict | None = None):
+        """Run a write query without blocking the event loop."""
+        await asyncio.to_thread(self.write, cypher, params)
 
 
 # Singleton
