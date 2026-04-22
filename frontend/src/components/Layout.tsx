@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard,
   Search,
+  Star,
   Shield,
   GitGraph,
   Activity,
@@ -32,6 +33,10 @@ export default function Layout() {
           <NavLink to="/wallet" className={({ isActive }) => isActive ? 'active' : ''}>
             <Search size={18} />
             Wallet Lookup
+          </NavLink>
+          <NavLink to="/favourites" className={({ isActive }) => isActive ? 'active' : ''}>
+            <Star size={18} />
+            Favourites
           </NavLink>
           <NavLink to="/fraud" className={({ isActive }) => isActive ? 'active' : ''}>
             <Shield size={18} />

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Search, Clock, ExternalLink, Copy, Check, ShieldAlert, TrendingUp, TrendingDown, Activity } from 'lucide-react';
+import { Search, Clock, ExternalLink, Copy, Check, ShieldAlert, TrendingUp, TrendingDown, Activity, Star } from 'lucide-react';
+import { isFavourite, toggleFavourite } from '../stores/favourites';
 import { getWallet, getWalletTransactions, getWalletRisk } from '../services/api';
 import Loading from '../components/Loading';
 import ErrorBox from '../components/ErrorBox';
@@ -33,6 +34,33 @@ function CopyButton({ text }: { text: string }) {
       }}
     >
       {copied ? <Check size={14} /> : <Copy size={14} />}
+    </button>
+  );
+}
+
+function FavouriteButton({ address }: { address: string }) {
+  const [faved, setFaved] = useState(() => isFavourite(address));
+  const handleToggle = () => {
+    const nowFaved = toggleFavourite(address);
+    setFaved(nowFaved);
+  };
+  return (
+    <button
+      onClick={handleToggle}
+      title={faved ? 'Remove from favourites' : 'Add to favourites'}
+      style={{
+        background: 'none',
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        padding: '4px 6px',
+        cursor: 'pointer',
+        color: faved ? '#f59e0b' : 'var(--text-muted)',
+        display: 'inline-flex',
+        alignItems: 'center',
+        transition: 'color 0.15s',
+      }}
+    >
+      <Star size={14} fill={faved ? '#f59e0b' : 'none'} />
     </button>
   );
 }
@@ -295,6 +323,7 @@ function WalletDashboard({ address }: { address: string }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="address-full">{wallet.address}</span>
               <CopyButton text={wallet.address} />
+              <FavouriteButton address={wallet.address} />
             </div>
             {wallet.source === 'rpc' && (
               <div style={{ marginTop: 6, fontSize: 12, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}>

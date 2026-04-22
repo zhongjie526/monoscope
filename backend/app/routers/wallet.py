@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.database import db
+from app.background_index import index_transactions_background
 
 router = APIRouter()
 
@@ -494,8 +495,13 @@ async def get_wallet_transactions(address: str, limit: int = 50):
     if result:
         return [TransactionRecord(**r) for r in result]
 
-    # Fallback: scan recent blocks via RPC
-    rpc_txs = _get_recent_txs(address, limit=min(limit, 20))
+    # Fallback: Monadscan / RPC
+    rpc_txs = _get_recent_txs(address, limit=min(limit, 50))
+
+    # Auto-index discovered transactions into Neo4j in background
+    if rpc_txs:
+        index_transactions_background(rpc_txs)
+
     return [TransactionRecord(**tx) for tx in rpc_txs]
 
 
@@ -548,8 +554,26 @@ async def get_wallet_graph(address: str, depth: int = 2, limit: int = 100):
             "timestamp": r["timestamp"],
         })
 
-    # If no graph data indexed, return just the target node
+    # If no graph data indexed, build graph from Monadscan tx data
     if not nodes:
-        nodes[address] = {"address": address}
+        monadscan_txs = _get_txs_from_monadscan(address, limit=50)
+        if monadscan_txs:
+            nodes[address] = {"address": address}
+            for tx in monadscan_txs:
+                from_addr = tx["from_addr"]
+                to_addr = tx["to_addr"]
+                if from_addr not in nodes:
+                    nodes[from_addr] = {"address": from_addr}
+                if to_addr and to_addr not in nodes:
+                    nodes[to_addr] = {"address": to_addr}
+                edges.append({
+                    "from": from_addr,
+                    "to": to_addr or from_addr,
+                    "tx_hash": tx["hash"],
+                    "value": tx["value"],
+                    "timestamp": tx["timestamp"],
+                })
+        else:
+            nodes[address] = {"address": address}
 
     return {"nodes": list(nodes.values()), "edges": edges}

@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ForceGraph2D from 'react-force-graph-2d';
-import { Search } from 'lucide-react';
+import { Search, Star, ChevronDown } from 'lucide-react';
 import { getWalletGraph } from '../services/api';
+import { getFavourites } from '../stores/favourites';
 import Loading from '../components/Loading';
 import ErrorBox from '../components/ErrorBox';
 import type { GraphData } from '../types';
@@ -18,6 +19,96 @@ interface GraphLink {
   target: string;
   value: number;
   tx_hash: string;
+}
+
+function FavouritesDropdown({ onSelect }: { onSelect: (addr: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const favs = getFavourites();
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  if (favs.length === 0) return null;
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '0 14px',
+          height: 47,
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          cursor: 'pointer',
+          color: 'var(--text)',
+          fontSize: 13,
+          fontWeight: 500,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <Star size={14} fill="#f59e0b" color="#f59e0b" />
+        Favourites
+        <ChevronDown size={14} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute',
+          top: 'calc(100% + 4px)',
+          right: 0,
+          minWidth: 320,
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+          zIndex: 50,
+          maxHeight: 300,
+          overflowY: 'auto',
+        }}>
+          {favs.map((f) => (
+            <button
+              key={f.address}
+              onClick={() => {
+                onSelect(f.address);
+                setOpen(false);
+              }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                width: '100%',
+                padding: '10px 14px',
+                background: 'none',
+                border: 'none',
+                borderBottom: '1px solid var(--border)',
+                cursor: 'pointer',
+                color: 'var(--text)',
+                textAlign: 'left',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-secondary)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+            >
+              {f.nickname && (
+                <span style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{f.nickname}</span>
+              )}
+              <span className="address" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {f.address.slice(0, 14)}…{f.address.slice(-10)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function GraphExplorer() {
@@ -103,15 +194,23 @@ export default function GraphExplorer() {
       </div>
 
       <form onSubmit={handleSearch}>
-        <div className="search-container">
-          <Search size={18} className="search-icon" />
-          <input
-            className="search-input"
-            type="text"
-            placeholder="Enter wallet address to explore its graph..."
-            value={inputVal}
-            onChange={(e) => setInputVal(e.target.value)}
-          />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 24 }}>
+          <div className="search-container" style={{ flex: 1, marginBottom: 0 }}>
+            <Search size={18} className="search-icon" />
+            <input
+              className="search-input"
+              type="text"
+              placeholder="Enter wallet address to explore its graph..."
+              value={inputVal}
+              onChange={(e) => setInputVal(e.target.value)}
+            />
+          </div>
+          <FavouritesDropdown onSelect={(addr) => {
+            setInputVal(addr);
+            setAddress(addr);
+            setSearchParams({ address: addr });
+            loadGraph(addr);
+          }} />
         </div>
       </form>
 
