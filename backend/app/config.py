@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     neo4j_password: str = "password"
     neo4j_database: str = "monad"
 
+    # Monadscan (Etherscan V2) API
+    monadscan_api_key: str | None = None
+    monadscan_api_url: str = "https://api.etherscan.io/v2/api"
+    monadscan_chain_id: int = 143
+
     # Indexer
     indexer_batch_size: int = 10  # blocks per batch
     indexer_poll_interval: float = 0.5  # seconds between polls

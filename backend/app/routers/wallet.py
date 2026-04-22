@@ -126,9 +126,120 @@ def _get_staking_info(address: str) -> list[dict]:
     return stakes
 
 
-def _get_recent_txs(address: str, limit: int = 20) -> list[dict]:
-    """Get recent transactions via block scanning (limited — best effort)."""
-    # For MVP, we scan the last ~50 blocks for this address
+def _get_txs_from_monadscan(address: str, limit: int = 50) -> list[dict] | None:
+    """Fetch transaction history from Monadscan (Etherscan V2 API).
+
+    Returns list of tx dicts, or None if API is unavailable.
+    """
+    if not settings.monadscan_api_key:
+        return None
+
+    try:
+        resp = httpx.get(
+            settings.monadscan_api_url,
+            params={
+                "chainid": settings.monadscan_chain_id,
+                "module": "account",
+                "action": "txlist",
+                "address": address,
+                "startblock": 0,
+                "endblock": 99999999,
+                "page": 1,
+                "offset": limit,
+                "sort": "desc",
+                "apikey": settings.monadscan_api_key,
+            },
+            timeout=15,
+        )
+        data = resp.json()
+        if data.get("status") != "1" or not data.get("result"):
+            return None
+
+        txs = []
+        for r in data["result"]:
+            value_wei = int(r.get("value", "0"))
+            input_data = r.get("input", "0x")
+            txs.append({
+                "hash": r["hash"],
+                "block_number": int(r["blockNumber"]),
+                "timestamp": int(r["timeStamp"]),
+                "from_addr": r["from"].lower(),
+                "to_addr": (r.get("to") or "").lower(),
+                "value": value_wei / 1e18,
+                "method": input_data[:10] if len(input_data) >= 10 else None,
+            })
+        return txs
+    except Exception:
+        return None
+
+
+def _get_recent_txs(address: str, limit: int = 50) -> list[dict]:
+    """Get transactions for an address.
+
+    Priority:
+    1. Monadscan API (full history, fast)
+    2. RPC binary search fallback (outbound only, slower)
+    """
+    address = address.lower()
+
+    # Try Monadscan first
+    monadscan_txs = _get_txs_from_monadscan(address, limit)
+    if monadscan_txs is not None:
+        return monadscan_txs
+
+    # Fallback: binary search for outbound txs via nonce
+    txs: list[dict] = []
+    seen_hashes: set[str] = set()
+
+    latest_hex = _rpc_call("eth_blockNumber", [])
+    nonce_count = _get_tx_count(address)
+    if nonce_count > 0 and nonce_count <= 20:
+        latest_block = int(latest_hex, 16) if latest_hex else 0
+        for target_n in range(1, nonce_count + 1):
+            block_num = _binary_search_nonce_block(address, 0, latest_block, target_nonce=target_n)
+            if block_num is None:
+                continue
+            block = _rpc_call("eth_getBlockByNumber", [hex(block_num), True])
+            if not block:
+                continue
+            timestamp = int(block["timestamp"], 16)
+            for tx_data in block.get("transactions", []):
+                if isinstance(tx_data, str):
+                    continue
+                if (tx_data.get("from") or "").lower() == address:
+                    tx_nonce = int(tx_data.get("nonce", "0x0"), 16)
+                    if tx_nonce == target_n - 1:
+                        tx_hash = tx_data["hash"]
+                        if tx_hash not in seen_hashes:
+                            seen_hashes.add(tx_hash)
+                            value_wei = int(tx_data.get("value", "0x0"), 16)
+                            input_data = tx_data.get("input", "0x")
+                            txs.append({
+                                "hash": tx_hash,
+                                "block_number": block_num,
+                                "timestamp": timestamp,
+                                "from_addr": address,
+                                "to_addr": (tx_data.get("to") or "").lower(),
+                                "value": value_wei / 1e18,
+                                "method": input_data[:10] if len(input_data) >= 10 else None,
+                            })
+                        break
+
+    txs.sort(key=lambda t: t["block_number"], reverse=True)
+    return txs[:limit]
+
+
+def _find_staking_txs(address: str) -> list[dict]:
+    """Find staking delegation transactions for a wallet.
+
+    Approach: if the wallet has staking positions, we know they interacted
+    with the staking contract. Use eth_getLogs with narrow binary-search
+    to find the delegation events without scanning millions of blocks.
+    """
+    address = address.lower()
+    addr_padded = "0x000000000000000000000000" + address.replace("0x", "")
+    delegation_topic = "0xe4d4df1e1827dd28252fd5c3cd7ebccd3da6e0aa31f74c828f3c8542af49d840"
+
     latest_hex = _rpc_call("eth_blockNumber", [])
     if not latest_hex:
         return []
@@ -136,31 +247,150 @@ def _get_recent_txs(address: str, limit: int = 20) -> list[dict]:
     latest = int(latest_hex, 16)
     txs = []
 
-    for block_num in range(latest, max(latest - 50, 0), -1):
-        block = _rpc_call("eth_getBlockByNumber", [hex(block_num), True])
-        if not block:
+    # Binary search: find which 100-block window contains the delegation event.
+    # Start by checking progressively larger ranges from the end,
+    # then narrow down. Most staking txs happened in the last few million blocks.
+    # Try recent first, then expand backwards in exponential jumps.
+    found_range = None
+    search_start = max(latest - 100, 0)
+
+    # Exponential backoff search: 100, 200, 400, 800... blocks from tip
+    step = 100
+    while search_start >= 0 and step <= 200_000_000:
+        from_block = max(search_start - step, 0)
+        to_block = min(from_block + 99, latest)  # 100-block window
+
+        result = _rpc_call("eth_getLogs", [{
+            "fromBlock": hex(from_block),
+            "toBlock": hex(to_block),
+            "address": STAKING_CONTRACT,
+            "topics": [delegation_topic, None, addr_padded],
+        }])
+
+        if result and isinstance(result, list) and len(result) > 0:
+            found_range = (from_block, to_block)
+            break
+
+        # Jump backwards exponentially
+        search_start -= step
+        step *= 2
+
+    # If exponential search didn't find it, try a smarter approach:
+    # The nonce is low, so the tx is probably early in the wallet's life.
+    # Use eth_getTransactionCount at different blocks to binary-search
+    # for the block where nonce went from 0->1.
+    if not found_range:
+        tx_block = _binary_search_nonce_block(address, 0, latest)
+        if tx_block is not None:
+            # Found the block, now get the tx from it
+            block = _rpc_call("eth_getBlockByNumber", [hex(tx_block), True])
+            if block:
+                timestamp = int(block["timestamp"], 16)
+                for tx in block.get("transactions", []):
+                    if isinstance(tx, str):
+                        continue
+                    if (tx.get("from") or "").lower() == address:
+                        value_wei = int(tx.get("value", "0x0"), 16)
+                        input_data = tx.get("input", "0x")
+                        txs.append({
+                            "hash": tx["hash"],
+                            "block_number": tx_block,
+                            "timestamp": timestamp,
+                            "from_addr": address,
+                            "to_addr": (tx.get("to") or "").lower(),
+                            "value": value_wei / 1e18,
+                            "method": input_data[:10] if len(input_data) >= 10 else None,
+                        })
+            return txs
+
+    if not found_range:
+        return []
+
+    # We found events in a 100-block window — extract tx details
+    result = _rpc_call("eth_getLogs", [{
+        "fromBlock": hex(found_range[0]),
+        "toBlock": hex(found_range[1]),
+        "address": STAKING_CONTRACT,
+        "topics": [delegation_topic, None, addr_padded],
+    }])
+
+    if not result or not isinstance(result, list):
+        return []
+
+    for log in result:
+        tx_hash = log.get("transactionHash")
+        if not tx_hash:
             continue
-        timestamp = int(block["timestamp"], 16)
-        for tx in block.get("transactions", []):
-            if isinstance(tx, str):
-                continue
-            from_addr = (tx.get("from") or "").lower()
-            to_addr = (tx.get("to") or "").lower()
-            if from_addr == address or to_addr == address:
-                value_wei = int(tx.get("value", "0x0"), 16)
-                input_data = tx.get("input", "0x")
-                txs.append({
-                    "hash": tx["hash"],
-                    "block_number": block_num,
-                    "timestamp": timestamp,
-                    "from_addr": from_addr,
-                    "to_addr": to_addr,
-                    "value": value_wei / 1e18,
-                    "method": input_data[:10] if len(input_data) >= 10 else None,
-                })
-                if len(txs) >= limit:
-                    return txs
+        tx = _rpc_call("eth_getTransactionByHash", [tx_hash])
+        if not tx:
+            continue
+        block_ts_hex = log.get("blockTimestamp")
+        if block_ts_hex:
+            timestamp = int(block_ts_hex, 16)
+        else:
+            block = _rpc_call("eth_getBlockByNumber", [log["blockNumber"], False])
+            timestamp = int(block["timestamp"], 16) if block else 0
+
+        value_wei = int(tx.get("value", "0x0"), 16)
+        input_data = tx.get("input", "0x")
+        txs.append({
+            "hash": tx_hash,
+            "block_number": int(log["blockNumber"], 16),
+            "timestamp": timestamp,
+            "from_addr": (tx.get("from") or "").lower(),
+            "to_addr": (tx.get("to") or "").lower(),
+            "value": value_wei / 1e18,
+            "method": input_data[:10] if len(input_data) >= 10 else None,
+        })
+
     return txs
+
+
+def _binary_search_nonce_block(
+    address: str, low: int, high: int, target_nonce: int = 1
+) -> int | None:
+    """Binary search to find the block where an address's nonce changed to target_nonce.
+
+    Returns the block number where the nonce first equals target_nonce, or None.
+    Requires ~log2(block_range) RPC calls (~27 calls for 100M blocks).
+    """
+    # First check current nonce is at least target_nonce
+    result = _rpc_call("eth_getTransactionCount", [address, hex(high)])
+    if not result or int(result, 16) < target_nonce:
+        return None
+
+    # Find a valid low block where nonce is 0.
+    # Monad mainnet genesis is around block 66M, so probe to find a valid start.
+    found_low = False
+    for candidate in [
+        low, 1, 1_000_000, 10_000_000, 50_000_000,
+        60_000_000, 64_000_000, 66_000_000, 66_100_000,
+    ]:
+        if candidate > high:
+            continue
+        result = _rpc_call("eth_getTransactionCount", [address, hex(candidate)])
+        if result is not None:
+            if int(result, 16) >= target_nonce:
+                return candidate  # Already had the nonce at this early block
+            low = candidate
+            found_low = True
+            break
+    if not found_low:
+        return None  # Couldn't find a valid starting block
+
+    # Binary search
+    while low < high:
+        mid = (low + high) // 2
+        result = _rpc_call("eth_getTransactionCount", [address, hex(mid)])
+        if not result:
+            return None
+        nonce_at_mid = int(result, 16)
+        if nonce_at_mid >= target_nonce:
+            high = mid
+        else:
+            low = mid + 1
+
+    return low
 
 
 # ── Endpoints ───────────────────────────────────────────────────────────

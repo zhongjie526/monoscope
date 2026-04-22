@@ -1,13 +1,41 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Search } from 'lucide-react';
+import { Search, Clock, ExternalLink, Copy, Check } from 'lucide-react';
 import { getWallet, getWalletTransactions, getWalletRisk } from '../services/api';
-import { useApi } from '../hooks/useApi';
 import Loading from '../components/Loading';
 import ErrorBox from '../components/ErrorBox';
 import RiskBadge from '../components/RiskBadge';
 import AddressLink from '../components/AddressLink';
+import { getCached, setCache, getRecentWithLabels } from '../stores/walletCache';
 import type { WalletSummary, TransactionRecord, WalletRisk } from '../types';
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      title={copied ? 'Copied!' : 'Copy address'}
+      style={{
+        background: 'none',
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        padding: '4px 6px',
+        cursor: 'pointer',
+        color: copied ? '#22c55e' : 'var(--text-muted)',
+        display: 'inline-flex',
+        alignItems: 'center',
+        transition: 'color 0.15s, border-color 0.15s',
+      }}
+    >
+      {copied ? <Check size={14} /> : <Copy size={14} />}
+    </button>
+  );
+}
 
 function formatTimestamp(ts: number | null) {
   if (!ts) return '—';
@@ -19,20 +47,83 @@ function formatMON(value: number) {
   return value.toFixed(4);
 }
 
+const KNOWN_METHODS: Record<string, string> = {
+  '0x84994fec': 'Delegate',
+  '0xa9059cbb': 'Transfer',
+  '0x095ea7b3': 'Approve',
+  '0x23b872dd': 'TransferFrom',
+  '0x573c1ce0': 'GetDelegator',
+  '0x4fd66050': 'GetDelegations',
+};
+
+function formatMethod(method: string | null) {
+  if (!method) return '—';
+  return KNOWN_METHODS[method] || method;
+}
+
 function WalletDashboard({ address }: { address: string }) {
   const [tab, setTab] = useState<'summary' | 'transactions'>('summary');
-  const { data: wallet, loading: wLoading, error: wError } = useApi<WalletSummary>(
-    () => getWallet(address), [address]
-  );
-  const { data: risk, loading: rLoading } = useApi<WalletRisk>(
-    () => getWalletRisk(address), [address]
-  );
-  const { data: txs, loading: tLoading } = useApi<TransactionRecord[]>(
-    () => getWalletTransactions(address), [address]
-  );
+  const [wallet, setWallet] = useState<WalletSummary | null>(null);
+  const [risk, setRisk] = useState<WalletRisk | null>(null);
+  const [txs, setTxs] = useState<TransactionRecord[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  if (wLoading || rLoading) return <Loading message="Fetching wallet data..." />;
-  if (wError) return <ErrorBox message={wError} />;
+  useEffect(() => {
+    let cancelled = false;
+
+    // Check cache first
+    const cached = getCached(address);
+    if (cached) {
+      setWallet(cached.wallet);
+      setRisk(cached.risk);
+      setTxs(cached.transactions);
+      setLoading(false);
+      // Background refresh
+      Promise.all([
+        getWallet(address),
+        getWalletRisk(address).catch(() => null),
+        getWalletTransactions(address).catch(() => null),
+      ]).then(([w, r, t]) => {
+        if (!cancelled) {
+          setWallet(w);
+          setRisk(r);
+          setTxs(t);
+          setCache(address, w, r, t);
+        }
+      }).catch(() => {});
+      return () => { cancelled = true; };
+    }
+
+    // No cache — full load
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      getWallet(address),
+      getWalletRisk(address).catch(() => null),
+      getWalletTransactions(address).catch(() => null),
+    ])
+      .then(([w, r, t]) => {
+        if (!cancelled) {
+          setWallet(w);
+          setRisk(r);
+          setTxs(t);
+          setCache(address, w, r, t);
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err.message || 'Unknown error');
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [address]);
+
+  if (loading) return <Loading message="Fetching wallet data..." />;
+  if (error) return <ErrorBox message={error} />;
   if (!wallet) return <ErrorBox message="Wallet not found" />;
 
   return (
@@ -42,10 +133,21 @@ function WalletDashboard({ address }: { address: string }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>WALLET ADDRESS</div>
-            <div className="address-full">{wallet.address}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="address-full">{wallet.address}</span>
+              <CopyButton text={wallet.address} />
+            </div>
             {wallet.source === 'rpc' && (
               <div style={{ marginTop: 6, fontSize: 12, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}>
                 ⚡ Live data from Monad RPC — this wallet hasn't been indexed yet for full analytics
+                <a
+                  href={`https://monadscan.com/address/${wallet.address}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: '#818cf8', marginLeft: 8, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                >
+                  Monadscan <ExternalLink size={12} />
+                </a>
               </div>
             )}
           </div>
@@ -154,12 +256,37 @@ function WalletDashboard({ address }: { address: string }) {
 
       {tab === 'transactions' && (
         <div className="card">
-          {tLoading ? (
-            <Loading message="Loading transactions..." />
-          ) : !txs || txs.length === 0 ? (
+          {!txs || txs.length === 0 ? (
             <div className="empty-state">
-              <h3>No Transactions</h3>
-              <p>No transactions found for this wallet</p>
+              <h3>No Transactions Found</h3>
+              {wallet.source === 'rpc' ? (
+                <>
+                  <p style={{ marginBottom: 12 }}>
+                    Transaction history requires indexing. This wallet hasn't been indexed yet.
+                  </p>
+                  <a
+                    href={`https://monadscan.com/address/${wallet.address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '8px 16px',
+                      background: 'var(--accent)',
+                      color: '#fff',
+                      borderRadius: 8,
+                      fontSize: 13,
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    View on Monadscan <ExternalLink size={14} />
+                  </a>
+                </>
+              ) : (
+                <p>No transactions found for this wallet</p>
+              )}
             </div>
           ) : (
             <div className="table-container">
@@ -177,12 +304,25 @@ function WalletDashboard({ address }: { address: string }) {
                 <tbody>
                   {txs.map((tx) => (
                     <tr key={tx.hash}>
-                      <td className="address">{tx.hash.slice(0, 10)}…</td>
+                      <td>
+                        <a
+                          href={`https://monadscan.com/tx/${tx.hash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="address"
+                          style={{ color: 'var(--accent)', textDecoration: 'none' }}
+                        >
+                          {tx.hash.slice(0, 10)}…
+                        </a>
+                      </td>
                       <td>{tx.block_number.toLocaleString()}</td>
                       <td><AddressLink address={tx.from_addr} /></td>
                       <td><AddressLink address={tx.to_addr} /></td>
                       <td style={{ fontFamily: 'monospace' }}>{formatMON(tx.value)} MON</td>
-                      <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{formatTimestamp(tx.timestamp)}</td>
+                      <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                        <span style={{ marginRight: 8 }}>{formatMethod(tx.method)}</span>
+                        {formatTimestamp(tx.timestamp)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -195,15 +335,76 @@ function WalletDashboard({ address }: { address: string }) {
   );
 }
 
+function RecentSearches({ onSelect }: { onSelect: (addr: string) => void }) {
+  const recent = getRecentWithLabels();
+  if (recent.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginTop: 24 }}>
+      <div className="card-title" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Clock size={16} />
+        Recent Searches
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {recent.map((r) => (
+          <button
+            key={r.address}
+            onClick={() => onSelect(r.address)}
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '10px 14px',
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              cursor: 'pointer',
+              color: 'var(--text)',
+              textAlign: 'left',
+              transition: 'border-color 0.15s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--accent)')}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+          >
+            <span className="address" style={{ fontSize: 13 }}>
+              {r.address.slice(0, 10)}…{r.address.slice(-8)}
+            </span>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {r.labels.map((l) => (
+                <span key={l} className="badge badge-info" style={{ fontSize: 11 }}>{l}</span>
+              ))}
+              {r.balance != null && (
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                  {formatMON(r.balance)} MON
+                </span>
+              )}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function WalletLookup() {
   const { address } = useParams<{ address?: string }>();
   const navigate = useNavigate();
   const [searchAddr, setSearchAddr] = useState(address || '');
 
+  // Sync input when URL param changes
+  useEffect(() => {
+    if (address) setSearchAddr(address);
+  }, [address]);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     const addr = searchAddr.trim();
     if (addr) navigate(`/wallet/${addr}`);
+  };
+
+  const handleSelectRecent = (addr: string) => {
+    setSearchAddr(addr);
+    navigate(`/wallet/${addr}`);
   };
 
   return (
@@ -229,10 +430,13 @@ export default function WalletLookup() {
       {address ? (
         <WalletDashboard address={address} />
       ) : (
-        <div className="empty-state">
-          <div className="icon">🔎</div>
-          <h3>Search for a wallet</h3>
-          <p>Enter a Monad wallet address above to see its analytics</p>
+        <div>
+          <div className="empty-state">
+            <div className="icon">🔎</div>
+            <h3>Search for a wallet</h3>
+            <p>Enter a Monad wallet address above to see its analytics</p>
+          </div>
+          <RecentSearches onSelect={handleSelectRecent} />
         </div>
       )}
     </div>
