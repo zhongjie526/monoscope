@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Search, Clock, ExternalLink, Copy, Check } from 'lucide-react';
+import { Search, Clock, ExternalLink, Copy, Check, ShieldAlert, TrendingUp, TrendingDown, Activity } from 'lucide-react';
 import { getWallet, getWalletTransactions, getWalletRisk } from '../services/api';
 import Loading from '../components/Loading';
 import ErrorBox from '../components/ErrorBox';
@@ -61,8 +61,167 @@ function formatMethod(method: string | null) {
   return KNOWN_METHODS[method] || method;
 }
 
+// ── Transaction Summary helpers ──────────────────────────────────────
+
+interface TxSummaryPeriod {
+  label: string;
+  inCount: number;
+  outCount: number;
+  inValue: number;
+  outValue: number;
+}
+
+function computeTxSummary(txs: TransactionRecord[], address: string): TxSummaryPeriod[] {
+  const now = Date.now() / 1000;
+  const periods = [
+    { label: '24 Hours', cutoff: now - 86400 },
+    { label: '7 Days', cutoff: now - 7 * 86400 },
+    { label: '30 Days', cutoff: now - 30 * 86400 },
+    { label: 'All Time', cutoff: 0 },
+  ];
+  const addr = address.toLowerCase();
+  return periods.map(({ label, cutoff }) => {
+    let inCount = 0, outCount = 0, inValue = 0, outValue = 0;
+    for (const tx of txs) {
+      if (tx.timestamp < cutoff) continue;
+      if (tx.from_addr === addr) {
+        outCount++;
+        outValue += tx.value;
+      } else if (tx.to_addr === addr) {
+        inCount++;
+        inValue += tx.value;
+      }
+    }
+    return { label, inCount, outCount, inValue, outValue };
+  });
+}
+
+// ── Risk Profile helpers ────────────────────────────────────────────
+
+interface RiskAnalysis {
+  score: number; // 0-10
+  level: 'clean' | 'low' | 'medium' | 'high' | 'critical';
+  color: string;
+  factors: { name: string; detail: string; weight: number }[];
+}
+
+function analyzeRisk(
+  txs: TransactionRecord[],
+  address: string,
+  risk: WalletRisk | null,
+): RiskAnalysis {
+  const addr = address.toLowerCase();
+  const factors: RiskAnalysis['factors'] = [];
+  let rawScore = 0;
+
+  // Factor 1: Circular flows / wash trading (from graph if indexed)
+  if (risk && risk.flags.length > 0) {
+    for (const flag of risk.flags) {
+      if (flag.startsWith('circular_flows')) {
+        const count = parseInt(flag.split(':')[1]) || 0;
+        const w = Math.min(count * 1.5, 4);
+        factors.push({ name: 'Circular Flows', detail: `${count} bidirectional partner(s) detected`, weight: w });
+        rawScore += w;
+      } else if (flag.startsWith('high_fan_out')) {
+        const count = parseInt(flag.split(':')[1]) || 0;
+        factors.push({ name: 'High Fan-Out', detail: `Sent to ${count} unique wallets`, weight: 2 });
+        rawScore += 2;
+      } else if (flag.startsWith('high_velocity')) {
+        factors.push({ name: 'High Velocity', detail: flag.replace('high_velocity:', '') + ' tx/hr', weight: 2 });
+        rawScore += 2;
+      }
+    }
+  }
+
+  // Factor 2: Transaction pattern analysis (from Monadscan data)
+  if (txs.length > 0) {
+    const uniqueCounterparties = new Set<string>();
+    let selfTxCount = 0;
+    let roundTripPartners = new Set<string>();
+    const sentTo = new Set<string>();
+    const receivedFrom = new Set<string>();
+    let totalIn = 0, totalOut = 0;
+    const timestamps: number[] = [];
+
+    for (const tx of txs) {
+      timestamps.push(tx.timestamp);
+      if (tx.from_addr === addr) {
+        sentTo.add(tx.to_addr);
+        totalOut += tx.value;
+        if (tx.to_addr === addr) selfTxCount++;
+        uniqueCounterparties.add(tx.to_addr);
+      } else {
+        receivedFrom.add(tx.from_addr);
+        totalIn += tx.value;
+        uniqueCounterparties.add(tx.from_addr);
+      }
+    }
+
+    // Round-trip detection
+    for (const a of sentTo) {
+      if (receivedFrom.has(a)) roundTripPartners.add(a);
+    }
+    if (roundTripPartners.size > 0) {
+      const w = Math.min(roundTripPartners.size * 1, 3);
+      factors.push({ name: 'Round-Trip Transfers', detail: `${roundTripPartners.size} address(es) with both in+out flows`, weight: w });
+      rawScore += w;
+    }
+
+    // Self-transfers
+    if (selfTxCount > 0) {
+      factors.push({ name: 'Self-Transfers', detail: `${selfTxCount} transaction(s) sent to self`, weight: 2 });
+      rawScore += 2;
+    }
+
+    // Velocity (if enough txs)
+    if (timestamps.length >= 5) {
+      const minT = Math.min(...timestamps);
+      const maxT = Math.max(...timestamps);
+      const hours = Math.max((maxT - minT) / 3600, 0.1);
+      const txPerHour = timestamps.length / hours;
+      if (txPerHour > 60) {
+        factors.push({ name: 'Bot-Like Speed', detail: `${txPerHour.toFixed(0)} tx/hr`, weight: 2 });
+        rawScore += 2;
+      } else if (txPerHour > 20) {
+        factors.push({ name: 'High Frequency', detail: `${txPerHour.toFixed(0)} tx/hr`, weight: 1 });
+        rawScore += 1;
+      }
+    }
+
+    // Value symmetry (wash trading signal)
+    if (totalIn > 0 && totalOut > 0) {
+      const ratio = Math.min(totalIn, totalOut) / Math.max(totalIn, totalOut);
+      if (ratio > 0.9 && txs.length > 4) {
+        factors.push({ name: 'Value Symmetry', detail: `In/Out ratio ${(ratio * 100).toFixed(0)}% — possible wash trading`, weight: 2 });
+        rawScore += 2;
+      }
+    }
+
+    // Diversity (low diversity = suspicious)
+    if (txs.length > 10 && uniqueCounterparties.size <= 3) {
+      factors.push({ name: 'Low Diversity', detail: `${txs.length} txs with only ${uniqueCounterparties.size} counterpart(s)`, weight: 1.5 });
+      rawScore += 1.5;
+    }
+  }
+
+  // If no factors found, it's clean
+  if (factors.length === 0) {
+    factors.push({ name: 'No Risk Signals', detail: 'No suspicious patterns detected', weight: 0 });
+  }
+
+  const score = Math.min(Math.round(rawScore * 10) / 10, 10);
+  let level: RiskAnalysis['level'] = 'clean';
+  let color = '#22c55e';
+  if (score >= 8) { level = 'critical'; color = '#dc2626'; }
+  else if (score >= 5) { level = 'high'; color = '#f97316'; }
+  else if (score >= 3) { level = 'medium'; color = '#f59e0b'; }
+  else if (score > 0) { level = 'low'; color = '#3b82f6'; }
+
+  return { score, level, color, factors };
+}
+
 function WalletDashboard({ address }: { address: string }) {
-  const [tab, setTab] = useState<'summary' | 'transactions'>('summary');
+  const [tab, setTab] = useState<'transactions' | 'summary' | 'risk'>('transactions');
   const [wallet, setWallet] = useState<WalletSummary | null>(null);
   const [risk, setRisk] = useState<WalletRisk | null>(null);
   const [txs, setTxs] = useState<TransactionRecord[] | null>(null);
@@ -233,26 +392,17 @@ function WalletDashboard({ address }: { address: string }) {
 
       {/* Tabs */}
       <div className="tabs">
-        <button className={`tab ${tab === 'summary' ? 'active' : ''}`} onClick={() => setTab('summary')}>
-          Summary
-        </button>
         <button className={`tab ${tab === 'transactions' ? 'active' : ''}`} onClick={() => setTab('transactions')}>
           Transactions ({txs?.length ?? 0})
         </button>
+        <button className={`tab ${tab === 'summary' ? 'active' : ''}`} onClick={() => setTab('summary')}>
+          Summary
+        </button>
+        <button className={`tab ${tab === 'risk' ? 'active' : ''}`} onClick={() => setTab('risk')}>
+          <ShieldAlert size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+          Risk Profile
+        </button>
       </div>
-
-      {tab === 'summary' && (
-        <div className="card">
-          <div className="card-title" style={{ marginBottom: 12 }}>Labels</div>
-          {wallet.labels.length > 0 ? (
-            <div style={{ display: 'flex', gap: 8 }}>
-              {wallet.labels.map((l) => <span key={l} className="badge badge-info">{l}</span>)}
-            </div>
-          ) : (
-            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>No labels assigned</span>
-          )}
-        </div>
-      )}
 
       {tab === 'transactions' && (
         <div className="card">
@@ -331,6 +481,154 @@ function WalletDashboard({ address }: { address: string }) {
           )}
         </div>
       )}
+
+      {tab === 'summary' && (
+        <div className="card">
+          {/* Labels */}
+          <div style={{ marginBottom: 20 }}>
+            <div className="card-title" style={{ marginBottom: 12 }}>Labels</div>
+            {wallet.labels.length > 0 ? (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {wallet.labels.map((l) => <span key={l} className="badge badge-info">{l}</span>)}
+              </div>
+            ) : (
+              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>No labels assigned</span>
+            )}
+          </div>
+
+          {/* Transaction Summary Table */}
+          {txs && txs.length > 0 && (() => {
+            const summary = computeTxSummary(txs, address);
+            return (
+              <div>
+                <div className="card-title" style={{ marginBottom: 12 }}>Transaction Activity</div>
+                <div className="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Period</th>
+                        <th style={{ textAlign: 'right' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <TrendingDown size={13} color="#22c55e" /> Inbound
+                          </span>
+                        </th>
+                        <th style={{ textAlign: 'right' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <TrendingUp size={13} color="#ef4444" /> Outbound
+                          </span>
+                        </th>
+                        <th style={{ textAlign: 'right' }}>Net Flow</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.map((p) => {
+                        const net = p.inValue - p.outValue;
+                        return (
+                          <tr key={p.label}>
+                            <td style={{ fontWeight: 500 }}>{p.label}</td>
+                            <td style={{ textAlign: 'right', fontFamily: 'monospace' }}>
+                              {p.inCount > 0 ? (
+                                <span style={{ color: '#22c55e' }}>
+                                  {p.inCount} tx · {formatMON(p.inValue)} MON
+                                </span>
+                              ) : (
+                                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                              )}
+                            </td>
+                            <td style={{ textAlign: 'right', fontFamily: 'monospace' }}>
+                              {p.outCount > 0 ? (
+                                <span style={{ color: '#ef4444' }}>
+                                  {p.outCount} tx · {formatMON(p.outValue)} MON
+                                </span>
+                              ) : (
+                                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                              )}
+                            </td>
+                            <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: net >= 0 ? '#22c55e' : '#ef4444' }}>
+                              {net >= 0 ? '+' : ''}{formatMON(net)} MON
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+
+          {(!txs || txs.length === 0) && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No transaction data available for summary.</div>
+          )}
+        </div>
+      )}
+
+      {tab === 'risk' && (() => {
+        const riskAnalysis = analyzeRisk(txs || [], address, risk);
+        return (
+          <div className="card">
+            {/* Score header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 24, marginBottom: 24, flexWrap: 'wrap' }}>
+              <div style={{
+                width: 80, height: 80, borderRadius: '50%',
+                border: `4px solid ${riskAnalysis.color}`,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <span style={{ fontSize: 28, fontWeight: 700, color: riskAnalysis.color, lineHeight: 1 }}>
+                  {riskAnalysis.score}
+                </span>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>/10</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 700, textTransform: 'uppercase', color: riskAnalysis.color }}>
+                  {riskAnalysis.level === 'clean' ? '✅ Clean' : `⚠️ ${riskAnalysis.level} risk`}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Based on {txs?.length ?? 0} transactions
+                  {risk && risk.flags.length > 0 ? ' + graph analysis' : ''}
+                </div>
+              </div>
+            </div>
+
+            {/* Risk factors */}
+            <div className="card-title" style={{ marginBottom: 12 }}>
+              <Activity size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+              Risk Factors
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {riskAnalysis.factors.map((f, i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8,
+                  borderLeft: `3px solid ${f.weight === 0 ? '#22c55e' : f.weight >= 2 ? '#ef4444' : f.weight >= 1 ? '#f59e0b' : '#3b82f6'}`,
+                }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{f.name}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{f.detail}</div>
+                  </div>
+                  {f.weight > 0 && (
+                    <span style={{
+                      fontSize: 12, fontWeight: 600, padding: '2px 8px', borderRadius: 12,
+                      background: f.weight >= 2 ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)',
+                      color: f.weight >= 2 ? '#ef4444' : '#f59e0b',
+                    }}>
+                      +{f.weight.toFixed(1)}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Methodology note */}
+            <div style={{ marginTop: 20, padding: 12, background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+              <strong>Methodology:</strong> Score combines on-chain transaction patterns
+              (round-trips, self-transfers, velocity, value symmetry, counterparty diversity)
+              {wallet.source === 'indexed' ? ' and Neo4j graph analysis (circular flows, fan-out, fan-in)' : ''}.
+              Scale: 0 = clean, 10 = maximum risk.
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
