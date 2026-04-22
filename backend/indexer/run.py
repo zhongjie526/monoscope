@@ -156,12 +156,22 @@ def index_block(block: dict, client: httpx.Client):
             UNWIND $transfers AS t
 
             MERGE (from:Wallet {address: t.from_addr})
-            ON CREATE SET from.first_seen = $timestamp
-            SET from.last_seen = $timestamp
+            ON CREATE SET from.first_seen = $timestamp, from.last_seen = $timestamp
+            SET from.first_seen = CASE
+                WHEN from.first_seen IS NULL OR from.first_seen > $timestamp
+                THEN $timestamp ELSE from.first_seen END,
+                from.last_seen = CASE
+                WHEN from.last_seen IS NULL OR from.last_seen < $timestamp
+                THEN $timestamp ELSE from.last_seen END
 
             MERGE (to:Wallet {address: t.to_addr})
-            ON CREATE SET to.first_seen = $timestamp
-            SET to.last_seen = $timestamp
+            ON CREATE SET to.first_seen = $timestamp, to.last_seen = $timestamp
+            SET to.first_seen = CASE
+                WHEN to.first_seen IS NULL OR to.first_seen > $timestamp
+                THEN $timestamp ELSE to.first_seen END,
+                to.last_seen = CASE
+                WHEN to.last_seen IS NULL OR to.last_seen < $timestamp
+                THEN $timestamp ELSE to.last_seen END
 
             CREATE (tx:Transaction {
                 hash: t.tx_hash,
@@ -172,16 +182,6 @@ def index_block(block: dict, client: httpx.Client):
             })
             CREATE (from)-[:SENT]->(tx)
             CREATE (tx)-[:TO]->(to)
-
-            // Maintain summary edge for fast fraud traversal
-            MERGE (from)-[agg:TRANSACTED]->(to)
-            ON CREATE SET agg.tx_count = 1,
-                          agg.total_value = t.value,
-                          agg.first_seen = $timestamp,
-                          agg.last_seen = $timestamp
-            ON MATCH SET agg.tx_count = agg.tx_count + 1,
-                         agg.total_value = agg.total_value + t.value,
-                         agg.last_seen = $timestamp
             """,
             {
                 "block_number": block_number,

@@ -1,10 +1,9 @@
 """Fraud detection endpoints — graph-based pattern analysis.
 
-Uses two layers:
-  - TRANSACTED: lightweight summary edge (Wallet→Wallet) for fast traversal
-  - SENT/TO via Transaction node: full detail for drill-down
+All queries traverse the canonical graph path:
+  Wallet -[:SENT]-> Transaction -[:TO]-> Wallet
 
-This dual-layer approach gives O(wallets) fraud scans instead of O(transactions).
+Aggregation is done inline via Cypher — no redundant summary edges needed.
 """
 
 from fastapi import APIRouter
@@ -34,22 +33,21 @@ class WalletRisk(BaseModel):
 
 @router.get("/wash-trading", response_model=list[FraudAlert])
 async def detect_wash_trading(min_round_trips: int = 2):
-    """Detect bidirectional fund flows (A⇄B) — wash trading signal.
-
-    Uses TRANSACTED summary edges for speed — no variable-length paths.
-    """
+    """Detect bidirectional fund flows (A⇄B) — wash trading signal."""
     result = db.query(
         """
-        MATCH (a:Wallet)-[ab:TRANSACTED]->(b:Wallet)-[ba:TRANSACTED]->(a)
+        MATCH (a:Wallet)-[:SENT]->(tx1:Transaction)-[:TO]->(b:Wallet)
         WHERE a.address < b.address
-          AND ab.tx_count + ba.tx_count >= $min_round_trips
+        WITH a, b, count(tx1) AS a_to_b_count, sum(tx1.value) AS a_to_b_value
+        MATCH (b)-[:SENT]->(tx2:Transaction)-[:TO]->(a)
+        WITH a, b, a_to_b_count, a_to_b_value,
+             count(tx2) AS b_to_a_count, sum(tx2.value) AS b_to_a_value
+        WHERE a_to_b_count + b_to_a_count >= $min_round_trips
         RETURN a.address AS wallet_a,
                b.address AS wallet_b,
-               ab.tx_count AS a_to_b_count,
-               ba.tx_count AS b_to_a_count,
-               ab.total_value AS a_to_b_value,
-               ba.total_value AS b_to_a_value,
-               ab.tx_count + ba.tx_count AS total_txs
+               a_to_b_count, b_to_a_count,
+               a_to_b_value, b_to_a_value,
+               a_to_b_count + b_to_a_count AS total_txs
         ORDER BY total_txs DESC
         LIMIT 50
         """,
@@ -84,10 +82,9 @@ async def detect_sybil_clusters(min_cluster_size: int = 5):
     """Detect wallets that funded many other wallets (fan-out pattern)."""
     result = db.query(
         """
-        MATCH (funder:Wallet)-[:TRANSACTED]->(funded:Wallet)
-        WITH funder, COUNT(funded) AS cluster_size,
-             COLLECT(funded.address)[..20] AS funded_wallets,
-             SUM(funder.last_seen - funder.first_seen) AS _
+        MATCH (funder:Wallet)-[:SENT]->(:Transaction)-[:TO]->(funded:Wallet)
+        WITH funder, count(DISTINCT funded) AS cluster_size,
+             collect(DISTINCT funded.address)[..20] AS funded_wallets
         WHERE cluster_size >= $min_cluster_size
         RETURN funder.address AS funder,
                funded_wallets,
@@ -123,13 +120,10 @@ async def detect_high_velocity(min_txs_per_hour: int = 60):
     """Detect wallets with bot-like transaction velocity."""
     result = db.query(
         """
-        MATCH (w:Wallet)
-        WHERE w.last_seen > w.first_seen
-        WITH w,
-             // Use TRANSACTED edges to count total outbound txs
-             [(w)-[r:TRANSACTED]->() | r.tx_count] AS counts
-        WITH w, REDUCE(s = 0, c IN counts | s + c) AS total_txs
+        MATCH (w:Wallet)-[:SENT]->(tx:Transaction)
+        WITH w, count(tx) AS total_txs
         WHERE total_txs >= 10
+          AND w.last_seen > w.first_seen
         WITH w, total_txs,
              toFloat(total_txs) / ((w.last_seen - w.first_seen) / 3600.0) AS txs_per_hour
         WHERE txs_per_hour >= $min_txs_per_hour
@@ -166,26 +160,29 @@ async def detect_high_velocity(min_txs_per_hour: int = 60):
 
 @router.get("/risk/{address}", response_model=WalletRisk)
 async def get_wallet_risk(address: str):
-    """Calculate risk score using TRANSACTED summary edges (fast)."""
+    """Calculate risk score from transaction patterns."""
     address = address.lower()
 
     result = db.query(
         """
         MATCH (w:Wallet {address: $address})
 
-        // Fan-out via TRANSACTED
-        OPTIONAL MATCH (w)-[out:TRANSACTED]->(recipient:Wallet)
-        WITH w, COUNT(recipient) AS fan_out,
-             COALESCE(SUM(out.tx_count), 0) AS total_sent_txs
+        // Fan-out: distinct recipients
+        OPTIONAL MATCH (w)-[:SENT]->(tx_out:Transaction)-[:TO]->(recipient:Wallet)
+        WITH w, count(DISTINCT recipient) AS fan_out,
+             count(tx_out) AS total_sent_txs
 
-        // Fan-in
-        OPTIONAL MATCH (sender:Wallet)-[:TRANSACTED]->(w)
-        WITH w, fan_out, total_sent_txs, COUNT(sender) AS fan_in
+        // Fan-in: distinct senders
+        OPTIONAL MATCH (sender:Wallet)-[:SENT]->(:Transaction)-[:TO]->(w)
+        WITH w, fan_out, total_sent_txs, count(DISTINCT sender) AS fan_in
 
-        // Bidirectional partners (wash trading signal)
-        OPTIONAL MATCH (w)-[:TRANSACTED]->(partner:Wallet)-[:TRANSACTED]->(w)
+        // Circular partners (A→B and B→A both exist)
+        OPTIONAL MATCH (w)-[:SENT]->(:Transaction)-[:TO]->(partner:Wallet)
+        WHERE EXISTS {
+            MATCH (partner)-[:SENT]->(:Transaction)-[:TO]->(w)
+        }
         WITH w, fan_out, fan_in, total_sent_txs,
-             COUNT(partner) AS circular_partners
+             count(DISTINCT partner) AS circular_partners
 
         // Velocity
         WITH w, fan_out, fan_in, total_sent_txs, circular_partners,

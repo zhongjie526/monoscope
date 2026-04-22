@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Search, Clock, ExternalLink, Copy, Check, ShieldAlert, TrendingUp, TrendingDown, Activity, Star } from 'lucide-react';
+import { Search, Clock, ExternalLink, Copy, Check, ShieldAlert, TrendingUp, TrendingDown, Activity, Star, CalendarRange, Scan, Lock } from 'lucide-react';
 import { isFavourite, toggleFavourite } from '../stores/favourites';
-import { getWallet, getWalletTransactions, getWalletRisk } from '../services/api';
+import { getWallet, getWalletTransactions, getWalletRisk, scanWallet } from '../services/api';
 import Loading from '../components/Loading';
 import ErrorBox from '../components/ErrorBox';
 import RiskBadge from '../components/RiskBadge';
@@ -248,6 +248,135 @@ function analyzeRisk(
   return { score, level, color, factors };
 }
 
+function IndexedPeriodCard({ wallet, onRefresh }: { wallet: WalletSummary; onRefresh: () => void }) {
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState(false);
+
+  // Initialize dates once on mount
+  useEffect(() => {
+    if (initialized) return;
+    if (wallet.first_seen) {
+      setStartDate(new Date(wallet.first_seen * 1000).toISOString().slice(0, 16));
+    }
+    if (wallet.last_seen) {
+      setEndDate(new Date(wallet.last_seen * 1000).toISOString().slice(0, 16));
+    }
+    if (wallet.first_seen || wallet.last_seen) setInitialized(true);
+  }, [wallet.first_seen, wallet.last_seen, initialized]);
+
+  const hasIndexedData = wallet.source === 'indexed' && wallet.first_seen && wallet.last_seen;
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <CalendarRange size={16} color="#818cf8" />
+          <span style={{ fontWeight: 600, fontSize: 14 }}>Indexed Period</span>
+          {hasIndexedData && (
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              · {wallet.tx_count} transactions indexed
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>FROM</label>
+          <input
+            type="datetime-local"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+            style={{
+              width: '100%', padding: '8px 10px', background: 'var(--bg-input)',
+              border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)',
+              fontSize: 13, outline: 'none', cursor: 'pointer',
+              colorScheme: 'dark',
+            }}
+          />
+        </div>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>TO</label>
+          <input
+            type="datetime-local"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+            style={{
+              width: '100%', padding: '8px 10px', background: 'var(--bg-input)',
+              border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)',
+              fontSize: 13, outline: 'none', cursor: 'pointer',
+              colorScheme: 'dark',
+            }}
+          />
+        </div>
+        <button
+          onClick={async () => {
+            setScanning(true);
+            setScanResult(null);
+            try {
+              const startTs = startDate ? Math.floor(new Date(startDate).getTime() / 1000) : undefined;
+              const endTs = endDate ? Math.floor(new Date(endDate).getTime() / 1000) : undefined;
+              const result = await scanWallet(wallet.address, startTs, endTs);
+              setScanResult(`Indexed ${result.indexed} transactions`);
+              // Update dates from refreshed wallet data
+              if (result.wallet?.first_seen) {
+                setStartDate(new Date(result.wallet.first_seen * 1000).toISOString().slice(0, 16));
+              }
+              if (result.wallet?.last_seen) {
+                setEndDate(new Date(result.wallet.last_seen * 1000).toISOString().slice(0, 16));
+              }
+              onRefresh();
+            } catch (err) {
+              setScanResult(`Scan failed: ${(err as Error).message}`);
+            } finally {
+              setScanning(false);
+            }
+          }}
+          disabled={scanning}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
+            background: scanning ? 'var(--bg-secondary)' : 'rgba(99,102,241,0.15)',
+            border: '1px solid rgba(99,102,241,0.3)', borderRadius: 6,
+            cursor: scanning ? 'not-allowed' : 'pointer',
+            color: '#818cf8', fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap',
+          }}
+        >
+          {scanning ? (
+            <><Scan size={14} className="spin" /> Scanning...</>
+          ) : (
+            <><Scan size={14} /> Scan Period</>
+          )}
+        </button>
+      </div>
+
+      {scanResult && (
+        <div style={{ marginTop: 10, fontSize: 12, color: '#22c55e' }}>
+          ✅ {scanResult}
+        </div>
+      )}
+
+      {!hasIndexedData && !scanResult && (
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)' }}>
+          No indexed data yet. Click Scan to index transactions for this wallet.
+        </div>
+      )}
+
+      <div style={{
+        marginTop: 10, padding: '6px 10px', borderRadius: 6,
+        background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.15)',
+        display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#d97706',
+      }}>
+        <Lock size={12} /> Custom date range scanning will be a Pro feature
+      </div>
+    </div>
+  );
+}
+
 function WalletDashboard({ address }: { address: string }) {
   const [tab, setTab] = useState<'transactions' | 'summary' | 'risk'>('transactions');
   const [wallet, setWallet] = useState<WalletSummary | null>(null);
@@ -309,6 +438,19 @@ function WalletDashboard({ address }: { address: string }) {
     return () => { cancelled = true; };
   }, [address]);
 
+  const refreshWallet = () => {
+    Promise.all([
+      getWallet(address),
+      getWalletRisk(address).catch(() => null),
+      getWalletTransactions(address).catch(() => null),
+    ]).then(([w, r, t]) => {
+      setWallet(w);
+      setRisk(r);
+      setTxs(t);
+      setCache(address, w, r, t);
+    }).catch(() => {});
+  };
+
   if (loading) return <Loading message="Fetching wallet data..." />;
   if (error) return <ErrorBox message={error} />;
   if (!wallet) return <ErrorBox message="Wallet not found" />;
@@ -325,9 +467,14 @@ function WalletDashboard({ address }: { address: string }) {
               <CopyButton text={wallet.address} />
               <FavouriteButton address={wallet.address} />
             </div>
-            {wallet.source === 'rpc' && (
+            {wallet.source === 'indexed' && wallet.first_seen && wallet.last_seen && (
+              <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                📊 Indexed period: {formatTimestamp(wallet.first_seen)} → {formatTimestamp(wallet.last_seen)} · {wallet.tx_count} txs
+              </div>
+            )}
+            {wallet.source === 'not_indexed' && (
               <div style={{ marginTop: 6, fontSize: 12, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}>
-                ⚡ Live data from Monad RPC — this wallet hasn't been indexed yet for full analytics
+                ⚠️ This wallet hasn't been indexed yet. Use Scan Period below to index transactions.
                 <a
                   href={`https://monadscan.com/address/${wallet.address}`}
                   target="_blank"
@@ -359,7 +506,7 @@ function WalletDashboard({ address }: { address: string }) {
           </div>
         )}
         <div className="stat-card">
-          <div className="label">{wallet.source === 'rpc' ? 'Nonce (Total Sent)' : 'Total Transactions'}</div>
+          <div className="label">Total Transactions</div>
           <div className="value">{wallet.tx_count.toLocaleString()}</div>
         </div>
         {wallet.source === 'indexed' && (
@@ -379,6 +526,9 @@ function WalletDashboard({ address }: { address: string }) {
           </>
         )}
       </div>
+
+      {/* Indexed Period */}
+      <IndexedPeriodCard wallet={wallet} onRefresh={refreshWallet} />
 
       {/* Staking info */}
       {wallet.staking && wallet.staking.length > 0 && (
@@ -403,21 +553,7 @@ function WalletDashboard({ address }: { address: string }) {
         </div>
       )}
 
-      {/* Time range */}
-      {wallet.source === 'indexed' && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
-            <div>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>First Seen: </span>
-              <span style={{ fontSize: 13 }}>{formatTimestamp(wallet.first_seen)}</span>
-            </div>
-            <div>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Last Seen: </span>
-              <span style={{ fontSize: 13 }}>{formatTimestamp(wallet.last_seen)}</span>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* Tabs */}
       <div className="tabs">
@@ -438,10 +574,10 @@ function WalletDashboard({ address }: { address: string }) {
           {!txs || txs.length === 0 ? (
             <div className="empty-state">
               <h3>No Transactions Found</h3>
-              {wallet.source === 'rpc' ? (
+              {wallet.source === 'not_indexed' ? (
                 <>
                   <p style={{ marginBottom: 12 }}>
-                    Transaction history requires indexing. This wallet hasn't been indexed yet.
+                    Use Scan Period above to index this wallet's transactions.
                   </p>
                   <a
                     href={`https://monadscan.com/address/${wallet.address}`}

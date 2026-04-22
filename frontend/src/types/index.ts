@@ -47,7 +47,15 @@ export interface WalletRisk {
 }
 
 export interface GraphData {
-  nodes: { address: string }[];
+  nodes: {
+    address: string;
+    balance?: number;
+    tx_count?: number;
+    total_sent?: number;
+    total_received?: number;
+    staked?: number;
+    staking_rewards?: number;
+  }[];
   edges: {
     from: string;
     to: string;

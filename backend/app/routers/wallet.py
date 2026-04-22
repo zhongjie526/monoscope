@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.database import db
-from app.background_index import index_transactions_background
+from app.background_index import index_transactions_background, enrich_wallet_background
 
 router = APIRouter()
 
@@ -396,38 +396,299 @@ def _binary_search_nonce_block(
 
 # ── Endpoints ───────────────────────────────────────────────────────────
 
-@router.get("/{address}", response_model=WalletSummary)
-async def get_wallet(address: str):
-    """Look up a wallet — checks indexed data first, falls back to live RPC."""
-    address = address.lower()
+class ScanRequest(BaseModel):
+    start_ts: int | None = None  # Unix timestamp
+    end_ts: int | None = None
 
-    # Try indexed data first
+
+def _timestamp_to_block(ts: int) -> int | None:
+    """Convert a Unix timestamp to a block number via Monadscan API."""
+    try:
+        resp = httpx.get(
+            settings.monadscan_api_url,
+            params={
+                "chainid": settings.monadscan_chain_id,
+                "module": "block",
+                "action": "getblocknobytime",
+                "timestamp": ts,
+                "closest": "before",
+                "apikey": settings.monadscan_api_key,
+            },
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("status") == "1" and data.get("message") == "OK":
+            return int(data["result"])
+    except Exception:
+        pass
+    return None
+
+
+def _get_txs_from_monadscan_range(
+    address: str, start_block: int = 0, end_block: int = 99999999, max_pages: int = 5,
+) -> list[dict]:
+    """Fetch transactions from Monadscan with block range and pagination."""
+    if not settings.monadscan_api_key:
+        return []
+    all_txs = []
+    page = 1
+    while page <= max_pages:
+        try:
+            resp = httpx.get(
+                settings.monadscan_api_url,
+                params={
+                    "chainid": settings.monadscan_chain_id,
+                    "module": "account",
+                    "action": "txlist",
+                    "address": address,
+                    "startblock": start_block,
+                    "endblock": end_block,
+                    "page": page,
+                    "offset": 1000,
+                    "sort": "asc",
+                    "apikey": settings.monadscan_api_key,
+                },
+                timeout=15,
+            )
+            data = resp.json()
+            if data.get("status") != "1" or not data.get("result"):
+                break
+            for r in data["result"]:
+                value_wei = int(r.get("value", "0"))
+                input_data = r.get("input", "0x")
+                all_txs.append({
+                    "hash": r["hash"],
+                    "block_number": int(r["blockNumber"]),
+                    "timestamp": int(r["timeStamp"]),
+                    "from_addr": r["from"].lower(),
+                    "to_addr": (r.get("to") or "").lower(),
+                    "value": value_wei / 1e18,
+                    "method": input_data[:10] if len(input_data) >= 10 else None,
+                })
+            if len(data["result"]) < 1000:
+                break  # Last page
+            page += 1
+        except Exception:
+            break
+    return all_txs
+
+
+@router.post("/{address}/scan")
+async def scan_wallet(address: str, body: ScanRequest | None = None):
+    """Re-scan a wallet: fetch transactions from Monadscan and index into Neo4j.
+
+    Optionally accepts start_ts/end_ts (Unix timestamps) to scan a specific period.
+    Returns updated wallet summary after indexing.
+    """
+    address = address.lower()
+    body = body or ScanRequest()
+
+    # Convert timestamps to block numbers if provided
+    start_block = 0
+    end_block = 99999999
+    if body.start_ts:
+        b = _timestamp_to_block(body.start_ts)
+        if b is not None:
+            start_block = b
+    if body.end_ts:
+        b = _timestamp_to_block(body.end_ts)
+        if b is not None:
+            end_block = b
+
+    # Fetch with pagination (up to 5000 txs)
+    txs = _get_txs_from_monadscan_range(address, start_block, end_block, max_pages=5)
+    indexed_count = 0
+    if txs:
+        from app.background_index import _index_transactions
+        _index_transactions(txs)
+        indexed_count = len(txs)
+
+    # Re-fetch wallet summary (now from Neo4j with fresh data)
+    balance = _get_balance(address)
+    staking = _get_staking_info(address)
+
+    # Re-query the newly indexed data (separate subqueries to avoid cross-product)
     result = db.query(
         """
         MATCH (w:Wallet {address: $address})
-        OPTIONAL MATCH (w)-[:SENT]->(tx_out:Transaction)-[:TO]->(other_out:Wallet)
-        OPTIONAL MATCH (other_in:Wallet)-[:SENT]->(tx_in:Transaction)-[:TO]->(w)
+        CALL {
+            WITH w
+            OPTIONAL MATCH (w)-[:SENT]->(tx_out:Transaction)-[:TO]->(other_out:Wallet)
+            RETURN count(tx_out) AS sent_count,
+                   coalesce(sum(tx_out.value), 0.0) AS total_sent
+        }
+        CALL {
+            WITH w
+            OPTIONAL MATCH (sender:Wallet)-[:SENT]->(tx_in:Transaction)-[:TO]->(w)
+            RETURN count(tx_in) AS recv_count,
+                   coalesce(sum(tx_in.value), 0.0) AS total_received
+        }
+        CALL {
+            WITH w
+            OPTIONAL MATCH (w)-[:SENT]->(:Transaction)-[:TO]->(out:Wallet)
+            WITH w, collect(DISTINCT out.address) AS outs
+            OPTIONAL MATCH (inc:Wallet)-[:SENT]->(:Transaction)-[:TO]->(w)
+            WITH outs, collect(DISTINCT inc.address) AS ins
+            UNWIND (outs + ins) AS addr
+            RETURN count(DISTINCT addr) AS unique_interactions
+        }
+        CALL {
+            WITH w
+            OPTIONAL MATCH (w)-[:SENT]->(tx1:Transaction)
+            RETURN min(tx1.timestamp) AS out_min, max(tx1.timestamp) AS out_max
+        }
+        CALL {
+            WITH w
+            OPTIONAL MATCH (:Wallet)-[:SENT]->(tx2:Transaction)-[:TO]->(w)
+            RETURN min(tx2.timestamp) AS in_min, max(tx2.timestamp) AS in_max
+        }
+        WITH w, sent_count, total_sent, recv_count, total_received, unique_interactions,
+             coalesce(CASE WHEN out_min IS NOT NULL AND in_min IS NOT NULL
+                           THEN CASE WHEN out_min < in_min THEN out_min ELSE in_min END
+                           WHEN out_min IS NOT NULL THEN out_min ELSE in_min END, null) AS first_seen,
+             coalesce(CASE WHEN out_max IS NOT NULL AND in_max IS NOT NULL
+                           THEN CASE WHEN out_max > in_max THEN out_max ELSE in_max END
+                           WHEN out_max IS NOT NULL THEN out_max ELSE in_max END, null) AS last_seen
         RETURN w.address AS address,
-               w.first_seen AS first_seen,
-               w.last_seen AS last_seen,
-               w.risk_score AS risk_score,
-               w.labels AS labels,
-               count(DISTINCT tx_out) AS sent_count,
-               sum(DISTINCT tx_out.value) AS total_sent,
-               count(DISTINCT tx_in) AS recv_count,
-               sum(DISTINCT tx_in.value) AS total_received,
-               count(DISTINCT other_out) AS unique_interactions
+               first_seen, last_seen,
+               sent_count, total_sent, recv_count, total_received,
+               unique_interactions
         """,
         {"address": address},
     )
 
     if result and result[0].get("address"):
         r = result[0]
-        balance = _get_balance(address)  # always fetch live balance
-        staking = _get_staking_info(address)
+        summary = WalletSummary(
+            address=address,
+            balance=balance or 0.0,
+            tx_count=(r["sent_count"] or 0) + (r["recv_count"] or 0),
+            total_sent=r["total_sent"] or 0.0,
+            total_received=r["total_received"] or 0.0,
+            unique_interactions=r["unique_interactions"] or 0,
+            first_seen=r["first_seen"],
+            last_seen=r["last_seen"],
+            source="indexed",
+            staking=[StakingInfo(**s) for s in staking],
+        )
+        enrich_wallet_background(address, summary.model_dump())
+        return {"indexed": indexed_count, "wallet": summary}
+
+    return {"indexed": indexed_count, "wallet": None}
+
+
+@router.post("/batch-stats")
+async def batch_wallet_stats(addresses: list[str]):
+    """Get cached wallet stats from Neo4j for multiple addresses.
+
+    Returns only data already stored on nodes — no RPC calls.
+    Fast enough for favourites lists.
+    """
+    addrs = [a.lower() for a in addresses[:50]]  # cap at 50
+    result = db.query(
+        """
+        UNWIND $addrs AS addr
+        OPTIONAL MATCH (w:Wallet {address: addr})
+        RETURN addr AS address,
+               w.balance AS balance,
+               w.tx_count AS tx_count,
+               w.total_sent AS total_sent,
+               w.total_received AS total_received,
+               w.staked AS staked,
+               w.staking_rewards AS staking_rewards,
+               w.labels AS labels,
+               w.stats_updated AS stats_updated
+        """,
+        {"addrs": addrs},
+    )
+    return [
+        {
+            "address": r["address"],
+            "balance": r.get("balance"),
+            "tx_count": r.get("tx_count"),
+            "total_sent": r.get("total_sent"),
+            "total_received": r.get("total_received"),
+            "staked": r.get("staked"),
+            "staking_rewards": r.get("staking_rewards"),
+            "labels": r.get("labels") or [],
+            "has_data": r.get("balance") is not None,
+        }
+        for r in result
+    ]
+
+
+@router.get("/{address}", response_model=WalletSummary)
+async def get_wallet(address: str):
+    """Look up a wallet — checks indexed data first, falls back to live RPC."""
+    address = address.lower()
+
+    # Try indexed data first (separate subqueries to avoid cross-product)
+    result = db.query(
+        """
+        MATCH (w:Wallet {address: $address})
+        CALL {
+            WITH w
+            OPTIONAL MATCH (w)-[:SENT]->(tx_out:Transaction)-[:TO]->(other_out:Wallet)
+            RETURN count(tx_out) AS sent_count,
+                   coalesce(sum(tx_out.value), 0.0) AS total_sent
+        }
+        CALL {
+            WITH w
+            OPTIONAL MATCH (sender:Wallet)-[:SENT]->(tx_in:Transaction)-[:TO]->(w)
+            RETURN count(tx_in) AS recv_count,
+                   coalesce(sum(tx_in.value), 0.0) AS total_received
+        }
+        CALL {
+            WITH w
+            OPTIONAL MATCH (w)-[:SENT]->(:Transaction)-[:TO]->(out:Wallet)
+            WITH w, collect(DISTINCT out.address) AS outs
+            OPTIONAL MATCH (inc:Wallet)-[:SENT]->(:Transaction)-[:TO]->(w)
+            WITH outs, collect(DISTINCT inc.address) AS ins
+            UNWIND (outs + ins) AS addr
+            RETURN count(DISTINCT addr) AS unique_interactions
+        }
+        CALL {
+            WITH w
+            OPTIONAL MATCH (w)-[:SENT]->(tx1:Transaction)
+            RETURN min(tx1.timestamp) AS out_min, max(tx1.timestamp) AS out_max
+        }
+        CALL {
+            WITH w
+            OPTIONAL MATCH (:Wallet)-[:SENT]->(tx2:Transaction)-[:TO]->(w)
+            RETURN min(tx2.timestamp) AS in_min, max(tx2.timestamp) AS in_max
+        }
+        WITH w, sent_count, total_sent, recv_count, total_received, unique_interactions,
+             coalesce(CASE WHEN out_min IS NOT NULL AND in_min IS NOT NULL
+                           THEN CASE WHEN out_min < in_min THEN out_min ELSE in_min END
+                           WHEN out_min IS NOT NULL THEN out_min ELSE in_min END, null) AS first_seen,
+             coalesce(CASE WHEN out_max IS NOT NULL AND in_max IS NOT NULL
+                           THEN CASE WHEN out_max > in_max THEN out_max ELSE in_max END
+                           WHEN out_max IS NOT NULL THEN out_max ELSE in_max END, null) AS last_seen
+        RETURN w.address AS address,
+               first_seen, last_seen,
+               w.risk_score AS risk_score,
+               w.labels AS labels,
+               sent_count, total_sent, recv_count, total_received,
+               unique_interactions
+        """,
+        {"address": address},
+    )
+
+    if result and result[0].get("address"):
+        r = result[0]
+        # Use cached balance/staking from Neo4j node — no RPC calls on page load
+        cached = db.query(
+            "MATCH (w:Wallet {address: $address}) RETURN w.balance AS balance, w.staked AS staked, w.staking_rewards AS rewards",
+            {"address": address},
+        )
+        c = cached[0] if cached else {}
+        # Build staking list from cached data
+        staking_list = []
+        if c.get("staked") and c["staked"] > 0:
+            staking_list = [{"validator_id": 0, "staked": c["staked"], "rewards": c.get("rewards") or 0.0}]
         return WalletSummary(
             address=r["address"],
-            balance=balance,
+            balance=c.get("balance"),
             tx_count=(r["sent_count"] or 0) + (r["recv_count"] or 0),
             total_sent=r["total_sent"] or 0.0,
             total_received=r["total_received"] or 0.0,
@@ -437,35 +698,16 @@ async def get_wallet(address: str):
             risk_score=r["risk_score"],
             labels=r["labels"] or [],
             source="indexed",
-            staking=[StakingInfo(**s) for s in staking],
+            staking=[StakingInfo(**s) for s in staking_list],
         )
 
-    # Fallback: live RPC lookup
-    balance = _get_balance(address)
-    if balance is None:
-        # Address doesn't exist on chain at all
-        return WalletSummary(
-            address=address,
-            balance=0.0,
-            tx_count=0,
-            source="rpc",
-            labels=["unknown"],
-        )
-
-    nonce = _get_tx_count(address)
-    staking = _get_staking_info(address)
-
-    labels = ["not yet indexed"] if nonce > 0 else ["new wallet"]
-    if staking:
-        labels.append("staker")
-
+    # No indexed data — return empty shell, user can Scan to populate
     return WalletSummary(
         address=address,
-        balance=balance,
-        tx_count=nonce,
-        source="rpc",
-        labels=labels,
-        staking=[StakingInfo(**s) for s in staking],
+        balance=None,
+        tx_count=0,
+        source="not_indexed",
+        labels=["not indexed"],
     )
 
 
@@ -492,17 +734,7 @@ async def get_wallet_transactions(address: str, limit: int = 50):
         {"address": address, "limit": limit},
     )
 
-    if result:
-        return [TransactionRecord(**r) for r in result]
-
-    # Fallback: Monadscan / RPC
-    rpc_txs = _get_recent_txs(address, limit=min(limit, 50))
-
-    # Auto-index discovered transactions into Neo4j in background
-    if rpc_txs:
-        index_transactions_background(rpc_txs)
-
-    return [TransactionRecord(**tx) for tx in rpc_txs]
+    return [TransactionRecord(**r) for r in result]
 
 
 @router.get("/{address}/graph")
@@ -553,6 +785,37 @@ async def get_wallet_graph(address: str, depth: int = 2, limit: int = 100):
             "value": r["value"],
             "timestamp": r["timestamp"],
         })
+
+    # Enrich nodes with wallet stats from Neo4j
+    if nodes:
+        addrs = list(nodes.keys())
+        stats = db.query(
+            """
+            UNWIND $addrs AS addr
+            MATCH (w:Wallet {address: addr})
+            RETURN w.address AS address,
+                   w.balance AS balance,
+                   w.tx_count AS tx_count,
+                   w.total_sent AS total_sent,
+                   w.total_received AS total_received,
+                   w.staked AS staked,
+                   w.staking_rewards AS staking_rewards
+            """,
+            {"addrs": addrs},
+        )
+        for s in stats:
+            addr = s["address"]
+            if addr in nodes:
+                nodes[addr].update({
+                    k: v for k, v in {
+                        "balance": s.get("balance"),
+                        "tx_count": s.get("tx_count"),
+                        "total_sent": s.get("total_sent"),
+                        "total_received": s.get("total_received"),
+                        "staked": s.get("staked"),
+                        "staking_rewards": s.get("staking_rewards"),
+                    }.items() if v is not None
+                })
 
     # If no graph data indexed, build graph from Monadscan tx data
     if not nodes:

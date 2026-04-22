@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Star, Trash2, Pencil, Check, X, Copy } from 'lucide-react';
 import { getFavourites, removeFavourite, updateNickname } from '../stores/favourites';
-import { getWallet } from '../services/api';
-import type { WalletSummary } from '../types';
+import { getBatchWalletStats } from '../services/api';
+import type { BatchWalletStats } from '../services/api';
 import type { FavouriteWallet } from '../stores/favourites';
 
 function CopyBtn({ text }: { text: string }) {
@@ -38,7 +38,7 @@ function formatMON(value: number) {
 }
 
 interface FavRow extends FavouriteWallet {
-  wallet: WalletSummary | null;
+  stats: BatchWalletStats | null;
   loading: boolean;
 }
 
@@ -50,19 +50,26 @@ export default function Favourites() {
 
   useEffect(() => {
     const favs = getFavourites();
-    const initial: FavRow[] = favs.map((f) => ({ ...f, wallet: null, loading: true }));
+    const initial: FavRow[] = favs.map((f) => ({ ...f, stats: null, loading: true }));
     setRows(initial);
 
-    // Fetch wallet data for each favourite
-    favs.forEach((f, i) => {
-      getWallet(f.address)
-        .then((w) => {
-          setRows((prev) => prev.map((r, j) => (j === i ? { ...r, wallet: w, loading: false } : r)));
-        })
-        .catch(() => {
-          setRows((prev) => prev.map((r, j) => (j === i ? { ...r, loading: false } : r)));
-        });
-    });
+    if (favs.length === 0) return;
+
+    // Single batch call — reads from Neo4j, no RPC
+    getBatchWalletStats(favs.map((f) => f.address))
+      .then((stats) => {
+        const statsMap = new Map(stats.map((s) => [s.address, s]));
+        setRows((prev) =>
+          prev.map((r) => ({
+            ...r,
+            stats: statsMap.get(r.address.toLowerCase()) ?? null,
+            loading: false,
+          }))
+        );
+      })
+      .catch(() => {
+        setRows((prev) => prev.map((r) => ({ ...r, loading: false })));
+      });
   }, []);
 
   const handleRemove = (address: string) => {
@@ -178,23 +185,20 @@ export default function Favourites() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 {r.loading ? (
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading...</span>
-                ) : r.wallet ? (
+                ) : r.stats?.has_data ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {r.wallet.balance != null && (
+                    {r.stats.balance != null && (
                       <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600 }}>
-                        {formatMON(r.wallet.balance)} MON
+                        {formatMON(r.stats.balance)} MON
                       </span>
                     )}
-                    {r.wallet.staking && r.wallet.staking.length > 0 && (
+                    {r.stats.staked != null && r.stats.staked > 0 && (
                       <span className="badge badge-info" style={{ fontSize: 11 }}>🥩 Staking</span>
                     )}
-                    {r.wallet.labels
-                      .filter((l) => l !== 'not yet indexed' && l !== 'staker')
-                      .map((l) => (
-                        <span key={l} className="badge badge-info" style={{ fontSize: 11 }}>{l}</span>
-                      ))}
                   </div>
-                ) : null}
+                ) : (
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No cached data</span>
+                )}
 
                 {/* Edit nickname button */}
                 <button

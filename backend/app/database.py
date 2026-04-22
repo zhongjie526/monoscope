@@ -65,11 +65,6 @@ class Neo4jDB:
                 "CREATE INDEX IF NOT EXISTS FOR (w:Wallet) ON (w.risk_score)"
             )
 
-            # Composite index for TRANSACTED summary edges
-            # These are lightweight Wallet→Wallet edges for fast fraud traversal
-            session.run(
-                "CREATE INDEX IF NOT EXISTS FOR ()-[r:TRANSACTED]-() ON (r.tx_count)"
-            )
 
     def query(self, cypher: str, params: dict | None = None) -> list[dict]:
         """Run a read query and return list of record dicts."""

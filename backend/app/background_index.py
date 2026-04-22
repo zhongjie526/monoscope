@@ -34,14 +34,20 @@ def _index_transactions(txs: list[dict]):
             UNWIND $transfers AS t
 
             MERGE (from:Wallet {address: t.from_addr})
-            ON CREATE SET from.first_seen = t.timestamp
-            SET from.last_seen = CASE
+            ON CREATE SET from.first_seen = t.timestamp, from.last_seen = t.timestamp
+            SET from.first_seen = CASE
+                WHEN from.first_seen IS NULL OR from.first_seen > t.timestamp
+                THEN t.timestamp ELSE from.first_seen END,
+                from.last_seen = CASE
                 WHEN from.last_seen IS NULL OR from.last_seen < t.timestamp
                 THEN t.timestamp ELSE from.last_seen END
 
             MERGE (to:Wallet {address: t.to_addr})
-            ON CREATE SET to.first_seen = t.timestamp
-            SET to.last_seen = CASE
+            ON CREATE SET to.first_seen = t.timestamp, to.last_seen = t.timestamp
+            SET to.first_seen = CASE
+                WHEN to.first_seen IS NULL OR to.first_seen > t.timestamp
+                THEN t.timestamp ELSE to.first_seen END,
+                to.last_seen = CASE
                 WHEN to.last_seen IS NULL OR to.last_seen < t.timestamp
                 THEN t.timestamp ELSE to.last_seen END
 
@@ -56,20 +62,6 @@ def _index_transactions(txs: list[dict]):
 
             MERGE (from)-[:SENT]->(tx)
             MERGE (tx)-[:TO]->(to)
-
-            // Only update TRANSACTED summary for genuinely new transactions
-            WITH from, to, tx, t
-            WHERE tx._new = true
-            MERGE (from)-[agg:TRANSACTED]->(to)
-            ON CREATE SET agg.tx_count = 1,
-                          agg.total_value = t.value,
-                          agg.first_seen = t.timestamp,
-                          agg.last_seen = t.timestamp
-            ON MATCH SET agg.tx_count = agg.tx_count + 1,
-                         agg.total_value = agg.total_value + t.value,
-                         agg.last_seen = CASE
-                             WHEN agg.last_seen < t.timestamp
-                             THEN t.timestamp ELSE agg.last_seen END
             """,
             {
                 "transfers": [
@@ -89,3 +81,48 @@ def _index_transactions(txs: list[dict]):
         logger.info(f"Background indexed {len(txs)} transactions into Neo4j")
     except Exception as e:
         logger.warning(f"Background indexing failed: {e}")
+
+
+def enrich_wallet_background(address: str, stats: dict):
+    """Fire-and-forget: write wallet stats onto its Neo4j node.
+
+    stats dict should have: balance, tx_count, total_sent, total_received,
+    unique_interactions, first_seen, last_seen, staking (list).
+    """
+    thread = threading.Thread(
+        target=_enrich_wallet, args=(address, stats), daemon=True
+    )
+    thread.start()
+
+
+def _enrich_wallet(address: str, stats: dict):
+    try:
+        staked_total = sum(s.get("staked", 0) for s in stats.get("staking", []))
+        rewards_total = sum(s.get("rewards", 0) for s in stats.get("staking", []))
+
+        db.write(
+            """
+            MERGE (w:Wallet {address: $address})
+            SET w.balance = $balance,
+                w.tx_count = $tx_count,
+                w.total_sent = $total_sent,
+                w.total_received = $total_received,
+                w.unique_interactions = $unique_interactions,
+                w.staked = $staked,
+                w.staking_rewards = $rewards,
+                w.stats_updated = timestamp()
+            """,
+            {
+                "address": address.lower(),
+                "balance": stats.get("balance", 0),
+                "tx_count": stats.get("tx_count", 0),
+                "total_sent": stats.get("total_sent", 0),
+                "total_received": stats.get("total_received", 0),
+                "unique_interactions": stats.get("unique_interactions", 0),
+                "staked": staked_total,
+                "rewards": rewards_total,
+            },
+        )
+        logger.info(f"Enriched wallet node {address[:10]}... with stats")
+    except Exception as e:
+        logger.warning(f"Wallet enrichment failed: {e}")
