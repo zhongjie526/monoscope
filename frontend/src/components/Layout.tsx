@@ -20,8 +20,8 @@ export default function Layout() {
         <div className="sidebar-header">
           <img src="/logo.svg" alt="Monoscope" className="logo" style={{ width: 32, height: 32 }} />
           <div>
-            <h1 style={{ letterSpacing: '0.5px' }}>Monoscope</h1>
-            <span style={{ letterSpacing: '0.3px' }}>On-chain Intelligence</span>
+            <h1 style={{ fontFamily: 'Outfit, sans-serif', textTransform: 'uppercase', letterSpacing: '2px', fontSize: 15, fontWeight: 600 }}>Monoscope</h1>
+            <span style={{ fontFamily: 'Outfit, sans-serif', letterSpacing: '1px', textTransform: 'uppercase', fontSize: 9 }}>On-chain Intelligence</span>
           </div>
         </div>
 

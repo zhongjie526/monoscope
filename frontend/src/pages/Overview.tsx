@@ -55,7 +55,7 @@ export default function Overview() {
       <div style={{ textAlign: 'center', padding: '32px 0 24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 6 }}>
           <img src="/logo.svg" alt="Monoscope" style={{ width: 36, height: 36 }} />
-          <h2 style={{ fontSize: 28, fontWeight: 700, letterSpacing: '0.5px' }}>Monoscope</h2>
+          <h2 style={{ fontFamily: 'Outfit, sans-serif', fontSize: 28, fontWeight: 600, letterSpacing: '3px', textTransform: 'uppercase' }}>Monoscope</h2>
         </div>
         <p style={{ color: 'var(--text-muted)', fontSize: 15 }}>
           On-chain intelligence for Monad
