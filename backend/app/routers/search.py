@@ -1,9 +1,17 @@
-"""Natural language search endpoint — ask questions about Monad data."""
+"""Natural language search endpoint — ask questions about Monad data.
 
+Uses Claude (Azure) to generate Cypher queries from natural language.
+Falls back to pre-built templates for common questions.
+"""
+
+import logging
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.database import db
+from app.llm import generate_cypher, summarize_results, get_client
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -16,9 +24,10 @@ class SearchResult(BaseModel):
     answer: str
     data: list[dict] | None = None
     query_used: str | None = None  # show the Cypher for transparency
+    source: str = "template"  # "template" | "ai"
 
 
-# Pre-built query templates for common questions
+# Pre-built query templates for common questions (fast path, no LLM cost)
 QUERY_TEMPLATES = {
     "top_wallets": {
         "pattern": ["top wallets", "biggest wallets", "most active", "whale"],
@@ -95,22 +104,80 @@ def match_template(question: str) -> dict | None:
 async def search(query: SearchQuery):
     """Ask a natural language question about Monad blockchain data.
 
-    Currently uses keyword matching against pre-built queries.
-    Will be upgraded to LLM-powered Cypher generation in a future version.
+    1. Try keyword match against pre-built templates (fast, free).
+    2. If no match, use Claude to generate Cypher from the question.
+    3. Execute the Cypher and summarize results with Claude.
     """
+    # Fast path: template match
     template = match_template(query.question)
-
-    if not template:
+    if template:
+        result = await db.aquery(template["cypher"])
         return SearchResult(
-            answer="I don't understand that question yet. Try asking about: "
-            "top wallets, large transfers, suspicious activity, new wallets, or stats.",
-            data=None,
+            answer=template["description"],
+            data=result,
+            query_used=template["cypher"].strip(),
+            source="template",
         )
 
-    result = await db.aquery(template["cypher"])
+    # AI path: generate Cypher with Claude
+    if get_client() is None:
+        return SearchResult(
+            answer="AI search is not configured. Try asking about: "
+            "top wallets, large transfers, suspicious activity, new wallets, or stats.",
+            data=None,
+            source="template",
+        )
 
-    return SearchResult(
-        answer=template["description"],
-        data=result,
-        query_used=template["cypher"].strip(),
-    )
+    try:
+        cypher = await generate_cypher(query.question)
+
+        if cypher is None or cypher == "UNSUPPORTED":
+            return SearchResult(
+                answer="I can't answer that question from the blockchain data. "
+                "Try asking about wallets, transactions, transfers, or on-chain activity.",
+                data=None,
+                source="ai",
+            )
+
+        # Safety: reject any write queries
+        cypher_upper = cypher.upper()
+        if any(kw in cypher_upper for kw in ["CREATE", "MERGE", "DELETE", "SET ", "REMOVE", "DROP"]):
+            logger.warning(f"LLM generated write query, rejecting: {cypher}")
+            return SearchResult(
+                answer="I generated a query that would modify data, which isn't allowed. "
+                "Please rephrase as a read-only question.",
+                data=None,
+                source="ai",
+            )
+
+        # Execute the generated Cypher
+        try:
+            result = await db.aquery(cypher)
+        except Exception as e:
+            logger.error(f"Generated Cypher failed: {cypher} — {e}")
+            return SearchResult(
+                answer=f"My query had a syntax error. Let me know what you're looking for "
+                f"and I'll try differently.",
+                data=None,
+                query_used=cypher,
+                source="ai",
+            )
+
+        # Summarize results with Claude
+        answer = await summarize_results(query.question, cypher, result)
+
+        return SearchResult(
+            answer=answer,
+            data=result,
+            query_used=cypher,
+            source="ai",
+        )
+
+    except Exception as e:
+        logger.error(f"AI search error: {e}")
+        return SearchResult(
+            answer=f"AI search encountered an error. Try a simpler question or ask about: "
+            f"top wallets, large transfers, suspicious activity, new wallets, or stats.",
+            data=None,
+            source="ai",
+        )

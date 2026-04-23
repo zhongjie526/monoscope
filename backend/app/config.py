@@ -24,11 +24,19 @@ class Settings(BaseSettings):
     indexer_batch_size: int = 10  # blocks per batch
     indexer_poll_interval: float = 0.5  # seconds between polls
 
-    # LLM (optional)
+    # LLM — Azure OpenAI (Claude via OpenAI-compatible API)
+    azure_openai_endpoint: str | None = None
+    azure_openai_api_key: str | None = None
+    azure_openai_model: str = "claude-opus-4-6"  # Azure deployment name
+
+    # LLM (legacy/optional)
     llm_provider: str | None = None
     gemini_api_key: str | None = None
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": [".env", "../.env"],
+        "env_file_encoding": "utf-8",
+    }
 
 
 settings = Settings()

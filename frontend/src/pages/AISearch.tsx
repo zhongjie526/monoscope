@@ -12,6 +12,9 @@ const EXAMPLE_QUERIES = [
   'Suspicious activity',
   'New wallets',
   'Give me the stats',
+  'Which wallets sent the most transactions?',
+  'Show me wallets connected to 0xabde...',
+  'What happened in block 69300000?',
 ];
 
 export default function AISearch() {
@@ -119,6 +122,17 @@ export default function AISearch() {
 
       {result && (
         <div className="result-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            {result.source === 'ai' && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                letterSpacing: '0.5px', padding: '2px 8px', borderRadius: 4,
+                background: 'rgba(131, 110, 249, 0.12)', color: '#836EF9',
+              }}>
+                ✨ AI
+              </span>
+            )}
+          </div>
           <div className="answer">{result.answer}</div>
           {result.data && result.data.length > 0 && renderData(result.data)}
           {result.query_used && (

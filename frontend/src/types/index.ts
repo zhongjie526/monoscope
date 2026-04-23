@@ -69,6 +69,7 @@ export interface SearchResult {
   answer: string;
   data: Record<string, unknown>[] | null;
   query_used: string | null;
+  source?: 'template' | 'ai';
 }
 
 export interface HealthStatus {
