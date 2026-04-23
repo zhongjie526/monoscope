@@ -258,8 +258,18 @@ def main():
     elif state.get("last_block"):
         start = state["last_block"] + 1
     else:
-        # Default: start from 1000 blocks ago
-        start = latest - 1000
+        # Try to resume from highest block in Neo4j
+        try:
+            with driver.session(database=NEO4J_DB) as s:
+                result = s.run("MATCH (b:Block) RETURN MAX(b.number) AS max_block").single()
+                max_block = result["max_block"] if result else None
+            if max_block:
+                start = max_block + 1
+                print(f"📍 Resuming from Neo4j max block: {max_block:,}")
+            else:
+                start = latest - 1000
+        except Exception:
+            start = latest - 1000
 
     gap = latest - start
     print(f"📊 Latest block: {latest:,}")
