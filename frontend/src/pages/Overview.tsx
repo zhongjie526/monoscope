@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search } from 'lucide-react';
 import { getStatus, getWashTrading, getSybilClusters, getHighVelocity } from '../services/api';
 import type { SystemStatus } from '../services/api';
 import Loading from '../components/Loading';
@@ -22,8 +21,6 @@ export default function Overview() {
   const [recentAlerts, setRecentAlerts] = useState<FraudAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchAddr, setSearchAddr] = useState('');
-
   useEffect(() => {
     async function load() {
       try {
@@ -47,12 +44,6 @@ export default function Overview() {
     load();
   }, []);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    const addr = searchAddr.trim();
-    if (addr) navigate(`/wallet/${addr}`);
-  };
-
   if (loading) return <Loading message="Loading..." />;
   if (error) return <ErrorBox message={error} />;
 
@@ -60,32 +51,15 @@ export default function Overview() {
 
   return (
     <div>
-      {/* Hero */}
-      <div style={{
-        textAlign: 'center', padding: '40px 0 24px',
-      }}>
+      {/* Header */}
+      <div style={{ textAlign: 'center', padding: '32px 0 24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 6 }}>
           <img src="/logo.svg" alt="Monoscope" style={{ width: 36, height: 36 }} />
           <h2 style={{ fontSize: 28, fontWeight: 700 }}>Monoscope</h2>
         </div>
-        <p style={{ color: 'var(--text-muted)', fontSize: 15, marginBottom: 24 }}>
-          On-chain intelligence for Monad — paste any address to investigate
+        <p style={{ color: 'var(--text-muted)', fontSize: 15 }}>
+          On-chain intelligence for Monad
         </p>
-
-        {/* Search — the hero CTA */}
-        <form onSubmit={handleSearch} style={{ maxWidth: 600, margin: '0 auto' }}>
-          <div className="search-container">
-            <Search size={18} className="search-icon" />
-            <input
-              className="search-input"
-              type="text"
-              placeholder="Paste a Monad wallet address (0x...)..."
-              value={searchAddr}
-              onChange={(e) => setSearchAddr(e.target.value)}
-              autoFocus
-            />
-          </div>
-        </form>
       </div>
 
       {/* Tracking period */}
