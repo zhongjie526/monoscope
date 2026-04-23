@@ -92,7 +92,7 @@ export default function Overview() {
           <div className="sub">Total transfers</div>
         </div>
         <div className="stat-card">
-          <div className="label">Fraud Alerts</div>
+          <div className="label">Fraud Detection</div>
           <div className="value" style={{ color: recentAlerts.length > 0 ? 'var(--orange)' : 'var(--green)' }}>
             {recentAlerts.length}
           </div>
@@ -108,7 +108,7 @@ export default function Overview() {
       {/* Recent Alerts */}
       <div className="card">
         <div className="card-header">
-          <span className="card-title">🚨 Recent Fraud Alerts</span>
+          <span className="card-title">🚨 Recent Detections</span>
           <button className="btn btn-ghost" onClick={() => navigate('/fraud')}>View All</button>
         </div>
         {recentAlerts.length === 0 ? (

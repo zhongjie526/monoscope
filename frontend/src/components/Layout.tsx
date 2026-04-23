@@ -40,7 +40,7 @@ export default function Layout() {
           </NavLink>
           <NavLink to="/fraud" className={({ isActive }) => isActive ? 'active' : ''}>
             <Shield size={18} />
-            Fraud Alerts
+            Fraud Detection
           </NavLink>
           <NavLink to="/graph" className={({ isActive }) => isActive ? 'active' : ''}>
             <GitGraph size={18} />
