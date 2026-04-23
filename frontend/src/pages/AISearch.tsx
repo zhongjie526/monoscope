@@ -135,14 +135,7 @@ export default function AISearch() {
           </div>
           <div className="answer">{result.answer}</div>
           {result.data && result.data.length > 0 && renderData(result.data)}
-          {result.query_used && (
-            <details style={{ marginTop: 12 }}>
-              <summary style={{ fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }}>
-                View Cypher Query
-              </summary>
-              <div className="cypher">{result.query_used}</div>
-            </details>
-          )}
+
         </div>
       )}
 
