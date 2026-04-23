@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <!-- Monad outer tilted rounded square — filled purple -->
-  <rect x="5" y="5" width="40" height="40" rx="11" ry="11"
+  <!-- Monad outer — superellipse (squircle) with bulging edges, rotated 45° -->
+  <path d="M25 0 C38 0, 50 12, 50 25 C50 38, 38 50, 25 50 C12 50, 0 38, 0 25 C0 12, 12 0, 25 0Z"
         fill="#6366f1"
         transform="rotate(45 25 25)"/>
-  <!-- Monad inner tilted rounded square — white fill, slight misalign -->
-  <rect x="12" y="12" width="26" height="26" rx="7" ry="7"
+  <!-- Monad inner — white squircle, rotated 50° (more clockwise) -->
+  <path d="M25 9 C32 9, 41 18, 41 25 C41 32, 32 41, 25 41 C18 41, 9 32, 9 25 C9 18, 18 9, 25 9Z"
         fill="white"
         transform="rotate(50 25 25)"/>
   <!-- Graph edges (behind nodes) -->
