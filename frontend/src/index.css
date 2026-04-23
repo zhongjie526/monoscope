@@ -1,29 +1,29 @@
 :root {
-  /* Colors */
-  --bg-primary: #0a0e17;
-  --bg-secondary: #111827;
-  --bg-card: #1a2332;
-  --bg-card-hover: #1f2b3d;
-  --bg-input: #0f1724;
-  --border: #1e293b;
+  /* Colors — Light theme */
+  --bg-primary: #f8f9fb;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f5f9;
+  --bg-input: #f1f5f9;
+  --border: #e2e8f0;
   --border-focus: #6366f1;
-  --text-primary: #e2e8f0;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
   --accent: #6366f1;
-  --accent-hover: #818cf8;
-  --green: #10b981;
-  --green-bg: rgba(16, 185, 129, 0.1);
-  --yellow: #f59e0b;
-  --yellow-bg: rgba(245, 158, 11, 0.1);
-  --red: #ef4444;
-  --red-bg: rgba(239, 68, 68, 0.1);
-  --orange: #f97316;
-  --orange-bg: rgba(249, 115, 22, 0.1);
-  --cyan: #06b6d4;
-  --cyan-bg: rgba(6, 182, 212, 0.1);
-  --purple: #a855f7;
-  --purple-bg: rgba(168, 85, 247, 0.1);
+  --accent-hover: #4f46e5;
+  --green: #059669;
+  --green-bg: rgba(5, 150, 105, 0.08);
+  --yellow: #d97706;
+  --yellow-bg: rgba(217, 119, 6, 0.08);
+  --red: #dc2626;
+  --red-bg: rgba(220, 38, 38, 0.06);
+  --orange: #ea580c;
+  --orange-bg: rgba(234, 88, 12, 0.08);
+  --cyan: #0891b2;
+  --cyan-bg: rgba(8, 145, 178, 0.08);
+  --purple: #7c3aed;
+  --purple-bg: rgba(124, 58, 237, 0.08);
 
   /* Layout */
   --sidebar-width: 240px;
@@ -133,12 +133,12 @@ a:hover {
 }
 
 .sidebar-nav a:hover {
-  background: var(--bg-card);
+  background: var(--bg-input);
   color: var(--text-primary);
 }
 
 .sidebar-nav a.active {
-  background: rgba(99, 102, 241, 0.1);
+  background: rgba(99, 102, 241, 0.08);
   color: var(--accent);
 }
 
@@ -200,11 +200,14 @@ a:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 20px;
-  transition: border-color 0.2s;
+  margin-bottom: 16px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .card:hover {
   border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .card-header {
@@ -235,6 +238,7 @@ a:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .stat-card .label {
@@ -268,7 +272,7 @@ a:hover {
 .search-input {
   width: 100%;
   padding: 14px 16px 14px 44px;
-  background: var(--bg-input);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   color: var(--text-primary);
@@ -390,7 +394,7 @@ tr:hover td {
 .address {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 12px;
-  color: var(--cyan);
+  color: var(--accent);
   cursor: pointer;
   transition: color 0.15s;
 }
@@ -432,7 +436,7 @@ tr:hover td {
 /* Error */
 .error-box {
   background: var(--red-bg);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border: 1px solid rgba(220, 38, 38, 0.2);
   border-radius: var(--radius);
   padding: 16px;
   color: var(--red);
@@ -488,7 +492,7 @@ tr:hover td {
 }
 
 .btn-ghost:hover {
-  background: var(--bg-card);
+  background: var(--bg-input);
   color: var(--text-primary);
 }
 
@@ -523,9 +527,9 @@ tr:hover td {
   border-bottom-color: var(--accent);
 }
 
-/* Graph container */
+/* Graph container — stays dark for better graph visibility */
 .graph-container {
-  background: var(--bg-input);
+  background: #0a0e17;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
@@ -540,6 +544,7 @@ tr:hover td {
   padding: 16px;
   margin-bottom: 12px;
   transition: border-color 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .alert-card:hover {

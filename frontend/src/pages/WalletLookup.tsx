@@ -58,9 +58,8 @@ function IndexedPeriodCard({ wallet, onRefresh }: { wallet: WalletSummary; onRef
             onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
             style={{
               width: '100%', padding: '8px 10px', background: 'var(--bg-input)',
-              border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)',
+              border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-primary)',
               fontSize: 13, outline: 'none', cursor: 'pointer',
-              colorScheme: 'dark',
             }}
           />
         </div>
@@ -73,9 +72,8 @@ function IndexedPeriodCard({ wallet, onRefresh }: { wallet: WalletSummary; onRef
             onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
             style={{
               width: '100%', padding: '8px 10px', background: 'var(--bg-input)',
-              border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)',
+              border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-primary)',
               fontSize: 13, outline: 'none', cursor: 'pointer',
-              colorScheme: 'dark',
             }}
           />
         </div>
