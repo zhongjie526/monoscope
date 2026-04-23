@@ -7,13 +7,7 @@ import {
   GitGraph,
   Activity,
 } from 'lucide-react';
-import { useApi } from '../hooks/useApi';
-import { getHealth } from '../services/api';
-
 export default function Layout() {
-  const { data: health } = useApi(() => getHealth(), []);
-  const isOnline = health?.neo4j ?? false;
-
   return (
     <div className="app-layout">
       <aside className="sidebar">
@@ -52,10 +46,7 @@ export default function Layout() {
           </NavLink>
         </nav>
 
-        <div className="sidebar-status">
-          <span className={`status-dot ${isOnline ? '' : 'offline'}`} />
-          {isOnline ? 'Connected' : 'Offline'}
-        </div>
+
       </aside>
 
       <main className="main-content">
