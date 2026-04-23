@@ -18,7 +18,7 @@ export default function Layout() {
     <div className="app-layout">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <span className="logo">🔬</span>
+          <img src="/logo.svg" alt="Monoscope" className="logo" style={{ width: 32, height: 32 }} />
           <div>
             <h1>Monoscope</h1>
             <span>On-chain Intelligence</span>

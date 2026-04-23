@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Scope ring -->
+  <circle cx="26" cy="26" r="21" stroke="#818cf8" stroke-width="3.5" fill="none"/>
+  <!-- Graph edges (behind nodes) -->
+  <line x1="18" y1="22" x2="32" y2="18" stroke="#818cf8" stroke-width="2" opacity="0.4"/>
+  <line x1="18" y1="22" x2="28" y2="34" stroke="#818cf8" stroke-width="2" opacity="0.4"/>
+  <line x1="32" y1="18" x2="28" y2="34" stroke="#a78bfa" stroke-width="2" opacity="0.4"/>
+  <!-- Graph nodes -->
+  <circle cx="18" cy="22" r="5" fill="#818cf8"/>
+  <circle cx="32" cy="18" r="4.5" fill="#a78bfa"/>
+  <circle cx="28" cy="34" r="4" fill="#c4b5fd"/>
+  <!-- Scope handle -->
+  <line x1="42" y1="42" x2="58" y2="58" stroke="#818cf8" stroke-width="5" stroke-linecap="round"/>
+</svg>

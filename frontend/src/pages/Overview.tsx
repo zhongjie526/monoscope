@@ -64,9 +64,10 @@ export default function Overview() {
       <div style={{
         textAlign: 'center', padding: '40px 0 24px',
       }}>
-        <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 6 }}>
-          🔬 Monoscope
-        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 6 }}>
+          <img src="/logo.svg" alt="Monoscope" style={{ width: 36, height: 36 }} />
+          <h2 style={{ fontSize: 28, fontWeight: 700 }}>Monoscope</h2>
+        </div>
         <p style={{ color: 'var(--text-muted)', fontSize: 15, marginBottom: 24 }}>
           On-chain intelligence for Monad — paste any address to investigate
         </p>
