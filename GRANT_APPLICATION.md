@@ -96,7 +96,7 @@ Monoscope fills this gap as the **first Monad-native fraud detection + investiga
 | Graph-based fraud detection | ✅ | ✅ | ❌ | ❌ | Partial |
 | AI-powered search | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Interactive investigation | ✅ | ✅ | ❌ | ❌ | ✅ |
-| Open source | ✅ (planned) | ❌ | ❌ | ❌ | ❌ |
+| Open source | ✅ | ❌ | ❌ | ❌ | ❌ |
 | 8 detection patterns | ✅ | ✅ | ❌ | ❌ | ❌ |
 
 **Key differentiator:** Monoscope is the only tool that combines **free access + graph-based fraud detection + AI search + interactive investigation** in one platform, purpose-built for Monad.
@@ -128,10 +128,13 @@ Monoscope fills this gap as the **first Monad-native fraud detection + investiga
 - Live Monad RPC integration for real-time wallet queries
 - Monad staking position detection
 
+✅ Deployed:
+- **Live app:** https://monoscope-seven.vercel.app
+- **Open-source:** https://github.com/zhongjie526/monoscope
+- Backend on Railway, Neo4j on Aura cloud
+
 🔜 Next steps:
-- Deploy to production (Hetzner ARM VPS + Vercel)
-- Open-source on GitHub
-- Run indexer for deeper chain coverage
+- Run indexer for deeper chain coverage (full mainnet history)
 - PR to `monad-crypto/protocols` for ecosystem listing
 - Community wallet labels & reporting system
 - Embeddable risk API for dApps
@@ -147,7 +150,7 @@ Monoscope fills this gap as the **first Monad-native fraud detection + investiga
 
 | Item | Amount | Purpose |
 |------|--------|---------|
-| Infrastructure (12 months) | $3,000 | Hetzner ARM VPS (Neo4j + API), Vercel frontend |
+| Infrastructure (12 months) | $3,000 | Railway (API), Neo4j Aura (graph DB), Vercel (frontend) |
 | LLM API costs (12 months) | $2,000 | Azure Claude for AI Search feature |
 | Full-chain indexing | $1,000 | Extended RPC access for historical chain data |
 | Development time | $6,000 | Risk API for dApps, community labels, airdrop detection |
