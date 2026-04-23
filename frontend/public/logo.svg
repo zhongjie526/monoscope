@@ -16,7 +16,7 @@
     C20 5, 22 3, 25 3 Z"
     fill="#836EF9"/>
   <!-- Inner — proper rounded square, tilted 8° more clockwise -->
-  <rect x="12" y="12" width="26" height="26" rx="5" ry="5"
+  <rect x="14" y="14" width="22" height="22" rx="4" ry="4"
         fill="white"
         transform="rotate(53 25 25)"/>
   <!-- Graph edges -->
