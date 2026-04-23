@@ -138,6 +138,15 @@ export default function Overview() {
                     </span>
                   )}
                 </div>
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => navigate(`/graph?address=${alert.wallets[0]}`)}
+                    style={{ fontSize: 12, padding: '6px 14px' }}
+                  >
+                    🔍 Investigate
+                  </button>
+                </div>
               </div>
             ))}
           </div>
