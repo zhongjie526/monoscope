@@ -212,6 +212,54 @@ def write_blocks(driver, blocks):
     stats["txs"] += len(tx_data)
 
 
+# ── Rotation (Aura Free node limit) ──────────────────────────────
+
+NODE_LIMIT = 195000  # Aura Free = 200K, leave 5K buffer
+ROTATION_DELETE_BATCH = 5000  # delete this many old txs per rotation
+
+
+def maybe_rotate(driver):
+    """If node count is near the Aura Free limit, delete oldest transactions
+    and orphaned wallets to make room."""
+    try:
+        with driver.session(database=NEO4J_DB) as session:
+            result = session.run("MATCH (n) RETURN count(n) AS total").single()
+            total = result["total"]
+
+            if total < NODE_LIMIT:
+                return
+
+            overage = total - NODE_LIMIT + ROTATION_DELETE_BATCH
+            print(f"\n♻️  Rotating: {total:,} nodes (limit {NODE_LIMIT:,}), deleting ~{overage:,} oldest txs...")
+
+            session.run(
+                """
+                MATCH (tx:Transaction)
+                WITH tx ORDER BY tx.block_number ASC LIMIT $limit
+                DETACH DELETE tx
+                """,
+                {"limit": overage},
+            )
+
+            result = session.run(
+                """
+                MATCH (w:Wallet)
+                WHERE NOT (w)-->()
+                  AND NOT ()-->(w)
+                WITH w LIMIT 10000
+                DELETE w
+                RETURN count(w) AS deleted
+                """
+            ).single()
+            orphans = result["deleted"]
+
+            new_total = session.run("MATCH (n) RETURN count(n) AS total").single()["total"]
+            print(f"  ✅ Deleted {overage:,} txs + {orphans:,} orphaned wallets. Now {new_total:,} nodes.")
+
+    except Exception as e:
+        print(f"  ⚠️  Rotation failed: {e}")
+
+
 # ── State ───────────────────────────────────────────────────────────
 
 def load_state():
@@ -335,6 +383,10 @@ def main():
             save_state(max_block, start_block=start)
             current = max_block + 1
             batch_count += 1
+
+            # Rotate old data every 100 batches to stay under Aura Free limit
+            if batch_count % 100 == 0:
+                maybe_rotate(driver)
 
             # Progress
             elapsed = time.time() - stats["start_time"]
