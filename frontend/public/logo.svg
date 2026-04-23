@@ -1,34 +1,34 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50" fill="none">
-  <!-- Outer — rounded corners + concave (inward curving) sides -->
+  <!-- Outer — rounded corners + very subtle convex sides -->
   <path d="
     M25 3
     C28 3, 30 5, 32 7
-    Q38 14, 43 18
+    Q37 12.5, 43 18
     C45 20, 47 22, 47 25
     C47 28, 45 30, 43 32
-    Q38 36, 32 43
+    Q37 37.5, 32 43
     C30 45, 28 47, 25 47
     C22 47, 20 45, 18 43
-    Q12 36, 7 32
+    Q13 37.5, 7 32
     C5 30, 3 28, 3 25
     C3 22, 5 20, 7 18
-    Q12 14, 18 7
+    Q13 12.5, 18 7
     C20 5, 22 3, 25 3 Z"
     fill="#836EF9"/>
   <!-- Inner — same shape, tilted 8° more clockwise -->
   <path d="
     M25 12
     C27 12, 28 13, 29 14
-    Q33 18, 36 20
+    Q33 17, 36 20
     C37 21, 38 22, 38 25
     C38 28, 37 29, 36 30
-    Q33 32, 29 36
+    Q33 33, 29 36
     C28 37, 27 38, 25 38
     C23 38, 22 37, 21 36
-    Q17 32, 14 30
+    Q17 33, 14 30
     C13 29, 12 28, 12 25
     C12 22, 13 21, 14 20
-    Q17 18, 21 14
+    Q17 17, 21 14
     C22 13, 23 12, 25 12 Z"
     fill="white"
     transform="rotate(8 25 25)"/>
