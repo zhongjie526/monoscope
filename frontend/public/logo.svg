@@ -1,12 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <!-- Outer — purple filled rounded square, rotated 45° -->
-  <rect x="5" y="5" width="40" height="40" rx="8" ry="8"
-        fill="#836EF9"
-        transform="rotate(45 25 25)"/>
-  <!-- Inner — white filled rounded square, rotated 53° (more clockwise) -->
-  <rect x="12" y="12" width="26" height="26" rx="5" ry="5"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50" fill="none">
+  <!-- Outer — Monad purple diamond, subtle concave sides -->
+  <path d="M25 2 Q33 13, 48 25 Q33 37, 25 48 Q17 37, 2 25 Q17 13, 25 2 Z"
+        fill="#836EF9"/>
+  <!-- Inner — white diamond, tilted 8° clockwise -->
+  <path d="M25 12 Q29 18, 38 25 Q29 32, 25 38 Q21 32, 12 25 Q21 18, 25 12 Z"
         fill="white"
-        transform="rotate(53 25 25)"/>
+        transform="rotate(8 25 25)"/>
   <!-- Graph edges -->
   <line x1="19" y1="22" x2="29" y2="20" stroke="#6366f1" stroke-width="1.5" opacity="0.35"/>
   <line x1="19" y1="22" x2="25" y2="30" stroke="#6366f1" stroke-width="1.5" opacity="0.35"/>
@@ -15,6 +14,4 @@
   <circle cx="19" cy="22" r="3.5" fill="#6366f1"/>
   <circle cx="29" cy="20" r="3" fill="#7c3aed"/>
   <circle cx="25" cy="30" r="2.5" fill="#a78bfa"/>
-  <!-- Scope handle -->
-  <line x1="44" y1="44" x2="58" y2="58" stroke="#836EF9" stroke-width="5" stroke-linecap="round"/>
 </svg>
