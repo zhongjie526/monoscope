@@ -30,7 +30,7 @@ class SearchResult(BaseModel):
 # Pre-built query templates for common questions (fast path, no LLM cost)
 QUERY_TEMPLATES = {
     "top_wallets": {
-        "pattern": ["top wallets", "biggest wallets", "most active", "whale"],
+        "pattern": ["top wallets", "biggest wallets", "most active", "whale", "largest wallets", "most sent", "sent the most"],
         "cypher": """
             MATCH (w:Wallet)-[:SENT]->(tx:Transaction)
             WITH w, COUNT(tx) AS tx_count, SUM(tx.value) AS total_value
@@ -41,7 +41,7 @@ QUERY_TEMPLATES = {
         "description": "Top wallets by total value sent",
     },
     "recent_large": {
-        "pattern": ["large transfer", "big transaction", "whale movement"],
+        "pattern": ["large transfer", "big transaction", "whale movement", "large transaction", "big transfer"],
         "cypher": """
             MATCH (from:Wallet)-[:SENT]->(tx:Transaction)-[:TO]->(to:Wallet)
             WHERE tx.value > 10000
@@ -53,7 +53,7 @@ QUERY_TEMPLATES = {
         "description": "Recent large transfers (>10,000 MON)",
     },
     "suspicious": {
-        "pattern": ["suspicious", "fraud", "scam", "risky", "danger"],
+        "pattern": ["suspicious", "fraud", "scam", "risky", "danger", "risk score", "risk_score", "highest risk"],
         "cypher": """
             MATCH (w:Wallet)
             WHERE w.risk_score > 0.5
@@ -65,7 +65,7 @@ QUERY_TEMPLATES = {
         "description": "Wallets with highest risk scores",
     },
     "new_wallets": {
-        "pattern": ["new wallet", "new address", "recently created"],
+        "pattern": ["new wallet", "new address", "recently created", "newest", "latest wallet"],
         "cypher": """
             MATCH (w:Wallet)
             WHERE w.first_seen IS NOT NULL
@@ -76,7 +76,7 @@ QUERY_TEMPLATES = {
         "description": "Most recently seen wallets",
     },
     "stats": {
-        "pattern": ["stats", "statistics", "overview", "how many", "total"],
+        "pattern": ["stats", "statistics", "overview", "how many", "total", "give me the stats", "count"],
         "cypher": """
             MATCH (w:Wallet)
             WITH COUNT(w) AS wallet_count

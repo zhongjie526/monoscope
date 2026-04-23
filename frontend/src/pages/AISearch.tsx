@@ -14,7 +14,7 @@ const EXAMPLE_QUERIES = [
   'Give me the stats',
   'Which wallets sent the most transactions?',
   'Find wallets that transacted with each other',
-  'Which wallets have the highest risk score?',
+  'Who are the most connected wallets?',
 ];
 
 export default function AISearch() {
