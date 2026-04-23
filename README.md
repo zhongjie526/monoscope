@@ -2,6 +2,8 @@
 
 **On-chain intelligence for Monad.**
 
+🌐 **Live:** [monoscope-seven.vercel.app](https://monoscope-seven.vercel.app)
+
 Paste any wallet address. Get instant fraud analysis, transaction history, risk scoring, and interactive graph visualization. No sign-up. No demo call. No paywall.
 
 > Other platforms make you talk to sales. Monoscope lets you investigate.

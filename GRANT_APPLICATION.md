@@ -179,8 +179,8 @@ Monoscope fills this gap as the **first Monad-native fraud detection + investiga
 
 ## Links
 
-- **GitHub:** github.com/zhongjie526/monoscope (coming soon)
-- **Live demo:** Available on request (currently localhost; production deployment planned)
+- **GitHub:** https://github.com/zhongjie526/monoscope
+- **Live demo:** https://monoscope-seven.vercel.app
 - **Tech stack:** FastAPI + Neo4j + React + Vite + TypeScript + Claude AI
 - **Chain:** Monad Mainnet (Chain ID 143)
 
