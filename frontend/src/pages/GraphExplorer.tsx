@@ -141,9 +141,7 @@ function InspectorPanel({
     const s = typeof e.source === 'string' ? e.source : (e.source as any).id;
     return s === node.id;
   });
-  // Total values available if needed
-  const _inTotal = inEdges.reduce((s, e) => s + e.value, 0); // eslint-disable-line @typescript-eslint/no-unused-vars
-  const _outTotal = outEdges.reduce((s, e) => s + e.value, 0); // eslint-disable-line @typescript-eslint/no-unused-vars
+
 
   return (
     <div style={{
