@@ -111,7 +111,7 @@ export default function FraudAlerts() {
               <div className="alert-desc">{alert.description}</div>
               <div className="alert-wallets">
                 {alert.wallets.slice(0, 6).map((w) => (
-                  <AddressLink key={w} address={w} />
+                  <AddressLink key={w} address={w} truncate={false} />
                 ))}
                 {alert.wallets.length > 6 && (
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>

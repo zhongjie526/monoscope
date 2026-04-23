@@ -88,7 +88,7 @@ async def detect_wash_trading(min_round_trips: int = 2):
                 severity="high" if r["total_txs"] > 10 else "medium",
                 wallets=[r["wallet_a"], r["wallet_b"]],
                 description=(
-                    f"Bidirectional flows: {r['wallet_a'][:10]}... ⇄ {r['wallet_b'][:10]}... "
+                    f"Bidirectional flows: {r['wallet_a']} ⇄ {r['wallet_b']} "
                     f"({r['a_to_b_count']}→ / {r['b_to_a_count']}←, "
                     f"{r['a_to_b_value']:.1f} / {r['b_to_a_value']:.1f} MON)"
                 ),
@@ -134,7 +134,7 @@ async def detect_sybil_clusters(min_cluster_size: int = 5):
                 pattern="sybil_cluster",
                 severity="critical" if r["cluster_size"] > 20 else "high",
                 wallets=[r["funder"]] + r["funded_wallets"][:10],
-                description=f"Fan-out: {r['funder'][:10]}... sent to {r['cluster_size']} unique wallets",
+                description=f"Fan-out: {r['funder']} sent to {r['cluster_size']} unique wallets",
                 evidence={
                     "funder": r["funder"],
                     "cluster_size": r["cluster_size"],
@@ -183,7 +183,7 @@ async def detect_high_velocity(min_txs_per_hour: int = 60):
                 pattern="high_velocity",
                 severity="medium",
                 wallets=[r["address"]],
-                description=f"Bot-like: {r['address'][:10]}... sent {r['tx_count']} txs ({r['txs_per_hour']:.0f}/hr)",
+                description=f"Bot-like: {r['address']} sent {r['tx_count']} txs ({r['txs_per_hour']:.0f}/hr)",
                 evidence={
                     "tx_count": r["tx_count"],
                     "txs_per_hour": round(r["txs_per_hour"], 1),
