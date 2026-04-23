@@ -1,20 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <!-- Monad outer — squarish with slight edge bulge, rotated 45° -->
-  <path d="M10 2 L40 2 C47 2 48 3 48 10 L48 40 C48 47 47 48 40 48 L10 48 C3 48 2 47 2 40 L2 10 C2 3 3 2 10 2Z"
-        fill="#6366f1"
-        transform="rotate(45 25 25)"/>
-  <!-- Monad inner — white, rotated 50° -->
-  <path d="M15 10 L35 10 C39 10 40 11 40 15 L40 35 C40 39 39 40 35 40 L15 40 C11 40 10 39 10 35 L10 15 C10 11 11 10 15 10Z"
+  <!-- Monad outer diamond — corners are sharp-ish, sides curve slightly inward -->
+  <path d="M25 2 C29 8, 42 8, 48 25 C42 42, 29 42, 25 48 C21 42, 8 42, 2 25 C8 8, 21 8, 25 2Z"
+        fill="#836EF9"
+        transform="rotate(0 25 25)"/>
+  <!-- Monad inner cutout — tilted more clockwise, same concave shape -->
+  <path d="M25 12 C27 15, 34 15, 38 25 C34 35, 27 35, 25 38 C23 35, 16 35, 12 25 C16 15, 23 15, 25 12Z"
         fill="white"
-        transform="rotate(50 25 25)"/>
+        transform="rotate(8 25 25)"/>
   <!-- Graph edges -->
-  <line x1="18" y1="21" x2="30" y2="19" stroke="#6366f1" stroke-width="1.8" opacity="0.3"/>
-  <line x1="18" y1="21" x2="25" y2="31" stroke="#6366f1" stroke-width="1.8" opacity="0.3"/>
-  <line x1="30" y1="19" x2="25" y2="31" stroke="#7c3aed" stroke-width="1.8" opacity="0.3"/>
+  <line x1="19" y1="22" x2="29" y2="20" stroke="#6366f1" stroke-width="1.5" opacity="0.35"/>
+  <line x1="19" y1="22" x2="25" y2="30" stroke="#6366f1" stroke-width="1.5" opacity="0.35"/>
+  <line x1="29" y1="20" x2="25" y2="30" stroke="#7c3aed" stroke-width="1.5" opacity="0.35"/>
   <!-- Graph nodes -->
-  <circle cx="18" cy="21" r="4" fill="#6366f1"/>
-  <circle cx="30" cy="19" r="3.5" fill="#7c3aed"/>
-  <circle cx="25" cy="31" r="3" fill="#a78bfa"/>
+  <circle cx="19" cy="22" r="3.5" fill="#6366f1"/>
+  <circle cx="29" cy="20" r="3" fill="#7c3aed"/>
+  <circle cx="25" cy="30" r="2.5" fill="#a78bfa"/>
   <!-- Scope handle -->
-  <line x1="44" y1="44" x2="58" y2="58" stroke="#6366f1" stroke-width="5" stroke-linecap="round"/>
+  <line x1="44" y1="44" x2="58" y2="58" stroke="#836EF9" stroke-width="5" stroke-linecap="round"/>
 </svg>
