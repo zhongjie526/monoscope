@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install --no-cache-dir httpx neo4j python-dotenv
+
+# Copy indexer
+COPY indexer.py .
+
+# Run indexer in tail mode
+CMD ["python3", "-u", "indexer.py", "--tail"]
