@@ -79,4 +79,6 @@ export interface HealthStatus {
 export interface Stats {
   wallet_count: number;
   tx_count: number;
+  first_tx: number | null;
+  last_tx: number | null;
 }

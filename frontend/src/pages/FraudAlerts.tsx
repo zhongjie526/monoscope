@@ -57,7 +57,7 @@ export default function FraudAlerts() {
     <div>
       <div className="page-header">
         <h2>🛡️ Fraud Detection</h2>
-        <p>Graph-based pattern analysis across indexed wallets</p>
+        <p>Graph-based pattern analysis across tracked wallets</p>
       </div>
 
       {/* Summary cards */}

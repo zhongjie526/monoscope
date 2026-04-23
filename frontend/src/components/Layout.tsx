@@ -18,10 +18,10 @@ export default function Layout() {
     <div className="app-layout">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <span className="logo">🐕</span>
+          <span className="logo">🔬</span>
           <div>
-            <h1>Monad Watchdog</h1>
-            <span>Fraud Detection & Analytics</span>
+            <h1>Monoscope</h1>
+            <span>On-chain Intelligence</span>
           </div>
         </div>
 
@@ -54,7 +54,7 @@ export default function Layout() {
 
         <div className="sidebar-status">
           <span className={`status-dot ${isOnline ? '' : 'offline'}`} />
-          {isOnline ? 'Neo4j Connected' : 'Neo4j Offline'}
+          {isOnline ? 'Connected' : 'Offline'}
         </div>
       </aside>
 

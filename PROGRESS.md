@@ -1,4 +1,4 @@
-# Monad Watchdog — Progress Report
+# Monoscope (formerly Monad Watchdog) — Progress Report
 
 ## Date: 2026-04-20
 

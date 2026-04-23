@@ -39,10 +39,10 @@ function IndexedPeriodCard({ wallet, onRefresh }: { wallet: WalletSummary; onRef
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <CalendarRange size={16} color="#818cf8" />
-          <span style={{ fontWeight: 600, fontSize: 14 }}>Indexed Period</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>Scan Period</span>
           {hasIndexedData && (
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              · {wallet.tx_count} transactions indexed
+              · {wallet.tx_count} transactions
             </span>
           )}
         </div>
@@ -87,7 +87,7 @@ function IndexedPeriodCard({ wallet, onRefresh }: { wallet: WalletSummary; onRef
               const startTs = startDate ? Math.floor(new Date(startDate).getTime() / 1000) : undefined;
               const endTs = endDate ? Math.floor(new Date(endDate).getTime() / 1000) : undefined;
               const result = await scanWallet(wallet.address, startTs, endTs);
-              setScanResult(`Indexed ${result.indexed} transactions`);
+              setScanResult(`Found ${result.indexed} transactions`);
               // Update dates from refreshed wallet data
               if (result.wallet?.first_seen) {
                 setStartDate(new Date(result.wallet.first_seen * 1000).toISOString().slice(0, 16));
@@ -127,7 +127,7 @@ function IndexedPeriodCard({ wallet, onRefresh }: { wallet: WalletSummary; onRef
 
       {!hasIndexedData && !scanResult && (
         <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)' }}>
-          No indexed data yet. Click Scan to index transactions for this wallet.
+          No transaction data yet. Click Scan to load transactions for this wallet.
         </div>
       )}
 
@@ -234,12 +234,12 @@ function WalletDashboard({ address }: { address: string }) {
             </div>
             {wallet.source === 'indexed' && wallet.first_seen && wallet.last_seen && (
               <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                📊 Indexed period: {formatTimestamp(wallet.first_seen)} → {formatTimestamp(wallet.last_seen)} · {wallet.tx_count} txs
+                📊 Data range: {formatTimestamp(wallet.first_seen)} → {formatTimestamp(wallet.last_seen)} · {wallet.tx_count} txs
               </div>
             )}
             {wallet.source === 'not_indexed' && (
               <div style={{ marginTop: 6, fontSize: 12, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}>
-                ⚠️ This wallet hasn't been indexed yet. Use Scan Period below to index transactions.
+                ⚠️ No data for this wallet yet. Use Scan Period below to load transactions.
                 <a
                   href={`https://monadscan.com/address/${wallet.address}`}
                   target="_blank"
@@ -292,7 +292,7 @@ function WalletDashboard({ address }: { address: string }) {
         )}
       </div>
 
-      {/* Indexed Period */}
+      {/* Scan Period */}
       <IndexedPeriodCard wallet={wallet} onRefresh={refreshWallet} />
 
       {/* Staking info */}
@@ -342,7 +342,7 @@ function WalletDashboard({ address }: { address: string }) {
               {wallet.source === 'not_indexed' ? (
                 <>
                   <p style={{ marginBottom: 12 }}>
-                    Use Scan Period above to index this wallet's transactions.
+                    Use Scan Period above to load this wallet's transactions.
                   </p>
                   <a
                     href={`https://monadscan.com/address/${wallet.address}`}
@@ -553,7 +553,7 @@ function WalletDashboard({ address }: { address: string }) {
             <div style={{ marginTop: 20, padding: 12, background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 12, color: 'var(--text-muted)' }}>
               <strong>Methodology:</strong> Score combines on-chain transaction patterns
               (round-trips, self-transfers, velocity, value symmetry, counterparty diversity)
-              {wallet.source === 'indexed' ? ' and Neo4j graph analysis (circular flows, fan-out, fan-in)' : ''}.
+              {wallet.source === 'indexed' ? ' and graph analysis (circular flows, fan-out, fan-in)' : ''}.
               Scale: 0 = clean, 10 = maximum risk.
             </div>
           </div>

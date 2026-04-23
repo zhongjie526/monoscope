@@ -231,7 +231,7 @@ def index_block(block: dict, client: httpx.Client):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Monad Watchdog Indexer")
+    parser = argparse.ArgumentParser(description="Monoscope Indexer")
     parser.add_argument("--start", type=int, help="Start from this block number")
     parser.add_argument("--batch", type=int, default=50,
                         help="Blocks per RPC batch call (max 100)")
@@ -254,7 +254,7 @@ def main():
         state["last_block"] = latest - 100  # start 100 blocks behind tip
         print(f"📍 First run — starting from block {state['last_block']}")
 
-    print(f"🐕 Monad Watchdog Indexer running (batch={args.batch})")
+    print(f"🔬 Monoscope Indexer running (batch={args.batch})")
     print(f"   RPC: {settings.monad_rpc_url}")
     print(f"   Last block: {state['last_block']}")
 

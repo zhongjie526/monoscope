@@ -2,7 +2,7 @@
  * Favourite wallets — persisted in localStorage.
  */
 
-const STORAGE_KEY = 'monad-watchdog-favourites';
+const STORAGE_KEY = 'monoscope-favourites';
 
 export interface FavouriteWallet {
   address: string;

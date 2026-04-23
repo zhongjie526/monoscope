@@ -26,6 +26,20 @@ import type {
 // Health
 export const getHealth = () => fetchJson<HealthStatus>('/health');
 
+// Status
+export interface SystemStatus {
+  indexer: {
+    start_block: number | null;
+    last_block: number | null;
+    start_time: number | null;
+    last_time: number | null;
+  };
+  wallet_count: number;
+  tx_count: number;
+}
+
+export const getStatus = () => fetchJson<SystemStatus>('/api/status');
+
 // Wallet
 export const getWallet = (address: string) =>
   fetchJson<WalletSummary>(`/api/wallet/${address.toLowerCase()}`);

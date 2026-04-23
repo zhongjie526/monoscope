@@ -1,16 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
-import { searchQuery, getWashTrading, getSybilClusters, getHighVelocity } from '../services/api';
+import { getStatus, getWashTrading, getSybilClusters, getHighVelocity } from '../services/api';
+import type { SystemStatus } from '../services/api';
 import Loading from '../components/Loading';
 import ErrorBox from '../components/ErrorBox';
 import SeverityBadge from '../components/SeverityBadge';
 import AddressLink from '../components/AddressLink';
-import type { Stats, FraudAlert } from '../types';
+import type { FraudAlert } from '../types';
+
+function formatDate(ts: number | null): string {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleDateString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+  });
+}
 
 export default function Overview() {
   const navigate = useNavigate();
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [status, setStatus] = useState<SystemStatus | null>(null);
   const [recentAlerts, setRecentAlerts] = useState<FraudAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -19,16 +27,13 @@ export default function Overview() {
   useEffect(() => {
     async function load() {
       try {
-        const [statsRes, wash, sybil, velocity] = await Promise.all([
-          searchQuery('stats'),
+        const [statusRes, wash, sybil, velocity] = await Promise.all([
+          getStatus(),
           getWashTrading(),
           getSybilClusters(),
           getHighVelocity(),
         ]);
-        if (statsRes.data && statsRes.data.length > 0) {
-          setStats(statsRes.data[0] as unknown as Stats);
-        }
-        // Combine and sort by severity
+        setStatus(statusRes);
         const allAlerts = [...wash, ...sybil, ...velocity];
         const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
         allAlerts.sort((a, b) => (severityOrder[a.severity] ?? 4) - (severityOrder[b.severity] ?? 4));
@@ -48,41 +53,68 @@ export default function Overview() {
     if (addr) navigate(`/wallet/${addr}`);
   };
 
-  if (loading) return <Loading message="Loading overview..." />;
+  if (loading) return <Loading message="Loading..." />;
   if (error) return <ErrorBox message={error} />;
+
+  const idx = status?.indexer;
 
   return (
     <div>
-      <div className="page-header">
-        <h2>🐕 Monad Watchdog</h2>
-        <p>AI-powered fraud detection and wallet analytics for Monad</p>
+      {/* Hero */}
+      <div style={{
+        textAlign: 'center', padding: '40px 0 24px',
+      }}>
+        <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 6 }}>
+          🔬 Monoscope
+        </h2>
+        <p style={{ color: 'var(--text-muted)', fontSize: 15, marginBottom: 24 }}>
+          On-chain intelligence for Monad — paste any address to investigate
+        </p>
+
+        {/* Search — the hero CTA */}
+        <form onSubmit={handleSearch} style={{ maxWidth: 600, margin: '0 auto' }}>
+          <div className="search-container">
+            <Search size={18} className="search-icon" />
+            <input
+              className="search-input"
+              type="text"
+              placeholder="Paste a Monad wallet address (0x...)..."
+              value={searchAddr}
+              onChange={(e) => setSearchAddr(e.target.value)}
+              autoFocus
+            />
+          </div>
+        </form>
       </div>
 
-      {/* Quick Search */}
-      <form onSubmit={handleSearch}>
-        <div className="search-container">
-          <Search size={18} className="search-icon" />
-          <input
-            className="search-input"
-            type="text"
-            placeholder="Paste a wallet address to investigate..."
-            value={searchAddr}
-            onChange={(e) => setSearchAddr(e.target.value)}
-          />
+      {/* Tracking period */}
+      {idx && idx.start_time && idx.last_time && (
+        <div style={{
+          marginBottom: 16, padding: '10px 16px', borderRadius: 8,
+          background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+          fontSize: 13, color: 'var(--text-muted)', display: 'flex',
+          alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        }}>
+          📅 Tracking period: {formatDate(idx.start_time)} — {formatDate(idx.last_time)}
+          {idx.start_block && idx.last_block && (
+            <span style={{ marginLeft: 8, opacity: 0.6, fontSize: 12 }}>
+              · Blocks {idx.start_block.toLocaleString()} – {idx.last_block.toLocaleString()}
+            </span>
+          )}
         </div>
-      </form>
+      )}
 
       {/* Stats */}
       <div className="stats-grid">
         <div className="stat-card">
-          <div className="label">Wallets Indexed</div>
-          <div className="value">{stats?.wallet_count?.toLocaleString() ?? '—'}</div>
-          <div className="sub">Unique addresses tracked</div>
+          <div className="label">Wallets Tracked</div>
+          <div className="value">{status?.wallet_count?.toLocaleString() ?? '—'}</div>
+          <div className="sub">Unique addresses</div>
         </div>
         <div className="stat-card">
           <div className="label">Transactions</div>
-          <div className="value">{stats?.tx_count?.toLocaleString() ?? '—'}</div>
-          <div className="sub">Total indexed transfers</div>
+          <div className="value">{status?.tx_count?.toLocaleString() ?? '—'}</div>
+          <div className="sub">Total transfers</div>
         </div>
         <div className="stat-card">
           <div className="label">Fraud Alerts</div>
@@ -108,7 +140,7 @@ export default function Overview() {
           <div className="empty-state">
             <div className="icon">✅</div>
             <h3>All Clear</h3>
-            <p>No fraud patterns detected in indexed data</p>
+            <p>No fraud patterns detected</p>
           </div>
         ) : (
           <div>

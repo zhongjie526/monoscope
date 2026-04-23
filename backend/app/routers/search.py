@@ -72,10 +72,11 @@ QUERY_TEMPLATES = {
             MATCH (w:Wallet)
             WITH COUNT(w) AS wallet_count
             MATCH (tx:Transaction)
-            WITH wallet_count, COUNT(tx) AS tx_count
-            RETURN wallet_count, tx_count
+            WITH wallet_count, COUNT(tx) AS tx_count,
+                 MIN(tx.timestamp) AS first_tx, MAX(tx.timestamp) AS last_tx
+            RETURN wallet_count, tx_count, first_tx, last_tx
         """,
-        "description": "Overall indexer statistics",
+        "description": "Overall Monoscope statistics",
     },
 }
 
