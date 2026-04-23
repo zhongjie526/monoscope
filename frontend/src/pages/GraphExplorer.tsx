@@ -337,9 +337,9 @@ export default function GraphExplorer() {
     const nodes: GraphNode[] = rawData.nodes.map((n) => {
       const stats = nodeValues.get(n.address) || { totalValue: 0, edgeCount: 0 };
       const category = categorize(n.address, address);
-      // Small nodes — center 5, others 3, gentle scaling
-      const baseRadius = category === 'center' ? 5 : 3;
-      const valueRadius = Math.sqrt(stats.totalValue / maxVal) * 3;
+      // Larger nodes to fit label inside — center 14, others 10
+      const baseRadius = category === 'center' ? 14 : 10;
+      const valueRadius = Math.sqrt(stats.totalValue / maxVal) * 4;
       const radius = Math.max(baseRadius, baseRadius + valueRadius);
       return {
         id: n.address,
@@ -378,8 +378,8 @@ export default function GraphExplorer() {
     const t = setTimeout(() => {
       if (graphRef.current) {
         try {
-          graphRef.current.d3Force('charge')?.strength(-300);
-          graphRef.current.d3Force('link')?.distance(80);
+          graphRef.current.d3Force('charge')?.strength(-500);
+          graphRef.current.d3Force('link')?.distance(120);
           graphRef.current.d3ReheatSimulation();
         } catch (_) { /* ref not ready */ }
       }
@@ -457,20 +457,42 @@ export default function GraphExplorer() {
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // Label
-    const fontSize = n.category === 'center' ? 11 : 9;
-    ctx.font = `${isHovered || isSelected ? 'bold ' : ''}${fontSize}px Inter, system-ui, sans-serif`;
+    // Last 4 chars inside node
+    const innerLabel = n.id.slice(-4);
+    const innerFontSize = Math.max(8, Math.min(r * 0.8, 12));
+    ctx.font = `bold ${innerFontSize}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillStyle = colors.text;
-    ctx.fillText(n.label, x, y + r + 4);
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.fillText(innerLabel, x, y);
 
-    // Show balance on hover
-    if (isHovered && n.balance != null) {
-      ctx.font = 'bold 10px Inter, system-ui, sans-serif';
-      ctx.textBaseline = 'bottom';
-      ctx.fillStyle = '#fde68a';
-      ctx.fillText(`${formatMON(n.balance)} MON`, x, y - r - 4);
+    // Hover: show full address above + balance below
+    if (isHovered || isSelected) {
+      // Background pill for address
+      const addrText = `${n.id.slice(0, 10)}…${n.id.slice(-6)}`;
+      ctx.font = 'bold 10px JetBrains Mono, monospace';
+      const addrWidth = ctx.measureText(addrText).width + 12;
+      ctx.fillStyle = 'rgba(15,15,25,0.9)';
+      ctx.beginPath();
+      ctx.roundRect(x - addrWidth / 2, y - r - 22, addrWidth, 16, 4);
+      ctx.fill();
+      ctx.fillStyle = colors.text;
+      ctx.textBaseline = 'middle';
+      ctx.fillText(addrText, x, y - r - 14);
+
+      // Balance below
+      if (n.balance != null) {
+        const balText = `${formatMON(n.balance)} MON`;
+        ctx.font = 'bold 10px Inter, system-ui, sans-serif';
+        const balWidth = ctx.measureText(balText).width + 12;
+        ctx.fillStyle = 'rgba(15,15,25,0.9)';
+        ctx.beginPath();
+        ctx.roundRect(x - balWidth / 2, y + r + 4, balWidth, 16, 4);
+        ctx.fill();
+        ctx.fillStyle = '#fde68a';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(balText, x, y + r + 12);
+      }
     }
   }, [hoveredNode, selectedNode]);
 
