@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import db
-from app.routers import wallet, fraud, search
+from app.routers import wallet, fraud, fraud_advanced, search
 
 INDEXER_STATE_FILE = Path(__file__).parent.parent.parent / "data" / "indexer_state.json"
 
@@ -40,6 +40,7 @@ app.add_middleware(
 
 app.include_router(wallet.router, prefix="/api/wallet", tags=["Wallet"])
 app.include_router(fraud.router, prefix="/api/fraud", tags=["Fraud Detection"])
+app.include_router(fraud_advanced.router, prefix="/api/fraud", tags=["Advanced Fraud Detection"])
 app.include_router(search.router, prefix="/api/search", tags=["Search"])
 
 

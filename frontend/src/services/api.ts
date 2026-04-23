@@ -90,6 +90,25 @@ export const getHighVelocity = (minTxsPerHour = 60) =>
 export const getWalletRisk = (address: string) =>
   fetchJson<WalletRisk>(`/api/fraud/risk/${address.toLowerCase()}`);
 
+// Advanced Fraud
+export const getFundCycling = (windowSecs = 60, minValue = 1000) =>
+  fetchJson<FraudAlert[]>(`/api/fraud/fund-cycling?window_seconds=${windowSecs}&min_value=${minValue}`);
+
+export const getBridgeWallets = (minSources = 5, minTargets = 5) =>
+  fetchJson<FraudAlert[]>(`/api/fraud/bridge-wallets?min_unique_sources=${minSources}&min_unique_targets=${minTargets}`);
+
+export const getRapidCashout = (windowBlocks = 50, drainPct = 0.9) =>
+  fetchJson<FraudAlert[]>(`/api/fraud/rapid-cashout?window_blocks=${windowBlocks}&drain_pct=${drainPct}`);
+
+export const getSybilExpansion = (minClusterSize = 5) =>
+  fetchJson<FraudAlert[]>(`/api/fraud/sybil-expansion?min_cluster_size=${minClusterSize}`);
+
+export const getSharedTargets = (minSenders = 5) =>
+  fetchJson<FraudAlert[]>(`/api/fraud/shared-targets?min_senders=${minSenders}`);
+
+export const getRiskScores = (limit = 50) =>
+  fetchJson<Record<string, unknown>[]>(`/api/fraud/risk-scores?limit=${limit}`);
+
 // Search
 export const searchQuery = (question: string) =>
   fetchJson<SearchResult>('/api/search/', {

@@ -1,18 +1,23 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getWashTrading, getSybilClusters, getHighVelocity } from '../services/api';
+import { getWashTrading, getSybilClusters, getHighVelocity, getFundCycling, getBridgeWallets, getRapidCashout, getSybilExpansion, getSharedTargets } from '../services/api';
 import Loading from '../components/Loading';
 import ErrorBox from '../components/ErrorBox';
 import SeverityBadge from '../components/SeverityBadge';
 import AddressLink from '../components/AddressLink';
 import type { FraudAlert } from '../types';
 
-type FilterType = 'all' | 'wash_trading' | 'sybil_cluster' | 'high_velocity';
+type FilterType = 'all' | 'wash_trading' | 'sybil_cluster' | 'high_velocity' | 'fund_cycling' | 'bridge_wallet' | 'rapid_cashout' | 'sybil_expansion' | 'shared_target';
 
 const PATTERN_LABELS: Record<string, { label: string; icon: string; desc: string }> = {
   wash_trading: { label: 'Wash Trading', icon: '🔄', desc: 'Bidirectional fund flows between wallets' },
   sybil_cluster: { label: 'Sybil Cluster', icon: '🕸️', desc: 'Single funder distributing to many wallets' },
   high_velocity: { label: 'High Velocity', icon: '⚡', desc: 'Bot-like transaction frequency' },
+  fund_cycling: { label: 'Fund Cycling', icon: '💸', desc: 'Rapid receive→forward relay pattern' },
+  bridge_wallet: { label: 'Bridge Wallet', icon: '🌉', desc: 'Intermediary connecting separate clusters' },
+  rapid_cashout: { label: 'Rapid Cash-Out', icon: '🚨', desc: 'Large inflow drained quickly' },
+  sybil_expansion: { label: 'Sybil Expansion', icon: '🔍', desc: 'Accomplices 1-hop from sybil clusters' },
+  shared_target: { label: 'Shared Target', icon: '🎯', desc: 'Wallet receiving from many unique senders' },
 };
 
 export default function FraudAlerts() {
@@ -25,12 +30,17 @@ export default function FraudAlerts() {
   useEffect(() => {
     async function load() {
       try {
-        const [wash, sybil, velocity] = await Promise.all([
+        const [wash, sybil, velocity, cycling, bridge, cashout, sybilExp, shared] = await Promise.all([
           getWashTrading(),
           getSybilClusters(),
           getHighVelocity(),
+          getFundCycling().catch(() => []),
+          getBridgeWallets().catch(() => []),
+          getRapidCashout().catch(() => []),
+          getSybilExpansion().catch(() => []),
+          getSharedTargets().catch(() => []),
         ]);
-        const all = [...wash, ...sybil, ...velocity];
+        const all = [...wash, ...sybil, ...velocity, ...cycling, ...bridge, ...cashout, ...sybilExp, ...shared];
         const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
         all.sort((a, b) => (severityOrder[a.severity] ?? 4) - (severityOrder[b.severity] ?? 4));
         setAlerts(all);
@@ -45,11 +55,11 @@ export default function FraudAlerts() {
 
   const filtered = filter === 'all' ? alerts : alerts.filter((a) => a.pattern === filter);
 
-  const counts = {
+  const counts: Record<string, number> = {
     all: alerts.length,
-    wash_trading: alerts.filter((a) => a.pattern === 'wash_trading').length,
-    sybil_cluster: alerts.filter((a) => a.pattern === 'sybil_cluster').length,
-    high_velocity: alerts.filter((a) => a.pattern === 'high_velocity').length,
+    ...Object.fromEntries(
+      Object.keys(PATTERN_LABELS).map((k) => [k, alerts.filter((a) => a.pattern === k).length])
+    ),
   };
 
   if (loading) return <Loading message="Running fraud detection..." />;
@@ -79,16 +89,26 @@ export default function FraudAlerts() {
       </div>
 
       {/* Filter tabs */}
-      <div className="tabs">
-        {(['all', 'wash_trading', 'sybil_cluster', 'high_velocity'] as const).map((f) => (
-          <button
-            key={f}
-            className={`tab ${filter === f ? 'active' : ''}`}
-            onClick={() => setFilter(f)}
-          >
-            {f === 'all' ? `All (${counts.all})` : `${PATTERN_LABELS[f]?.label} (${counts[f]})`}
-          </button>
-        ))}
+      <div className="tabs" style={{ flexWrap: 'wrap' }}>
+        <button
+          className={`tab ${filter === 'all' ? 'active' : ''}`}
+          onClick={() => setFilter('all')}
+        >
+          All ({counts.all})
+        </button>
+        {Object.entries(PATTERN_LABELS).map(([key, { label }]) => {
+          const count = counts[key] || 0;
+          if (count === 0) return null;
+          return (
+            <button
+              key={key}
+              className={`tab ${filter === key ? 'active' : ''}`}
+              onClick={() => setFilter(key as FilterType)}
+            >
+              {label} ({count})
+            </button>
+          );
+        })}
       </div>
 
       {/* Alerts list */}
