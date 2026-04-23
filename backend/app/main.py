@@ -80,14 +80,13 @@ async def status():
     # Get block timestamps + counts from Neo4j
     try:
         result = await db.aquery("""
-            MATCH (b:Block)
-            WITH MIN(b.number) AS min_block, MAX(b.number) AS max_block,
-                 MIN(b.timestamp) AS first_time, MAX(b.timestamp) AS last_time
-            MATCH (w:Wallet)
-            WITH min_block, max_block, first_time, last_time, COUNT(w) AS wallet_count
             MATCH (tx:Transaction)
+            WITH MIN(tx.block_number) AS min_block, MAX(tx.block_number) AS max_block,
+                 MIN(tx.timestamp) AS first_time, MAX(tx.timestamp) AS last_time,
+                 COUNT(tx) AS tx_count
+            MATCH (w:Wallet)
             RETURN min_block, max_block, first_time, last_time,
-                   wallet_count, COUNT(tx) AS tx_count
+                   COUNT(w) AS wallet_count, tx_count
         """)
         if result:
             row = result[0]

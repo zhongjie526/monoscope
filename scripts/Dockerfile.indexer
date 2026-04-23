@@ -9,4 +9,4 @@ RUN pip install --no-cache-dir httpx neo4j python-dotenv
 COPY indexer.py .
 
 # Run indexer in tail mode
-CMD ["python3", "-u", "indexer.py", "--tail"]
+CMD ["python3", "-u", "indexer.py", "--tail", "--no-blocks"]

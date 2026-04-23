@@ -163,8 +163,8 @@ def write_blocks(driver, blocks):
                 stats["wallets_seen"].add(to_addr)
 
     with driver.session(database=NEO4J_DB) as session:
-        # Write blocks
-        if block_data:
+        # Write blocks (skip if --no-blocks to save Aura Free node limit)
+        if block_data and not getattr(write_blocks, '_no_blocks', False):
             session.run(
                 """
                 UNWIND $blocks AS b
@@ -237,6 +237,7 @@ def main():
     parser.add_argument("--batches", type=int, default=0, help="Max RPC batches (0=unlimited)")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help=f"Blocks per RPC batch (default {BATCH_SIZE})")
     parser.add_argument("--tail", action="store_true", help="Keep running, tail new blocks")
+    parser.add_argument("--no-blocks", action="store_true", help="Skip Block node creation (saves nodes on Aura Free)")
     args = parser.parse_args()
 
     batch_size = args.batch_size
@@ -248,6 +249,13 @@ def main():
     print("📦 Connecting to Neo4j...")
     driver = connect_neo4j()
     print("✅ Neo4j connected")
+
+    # Set no-blocks flag on write_blocks function
+    if args.no_blocks:
+        write_blocks._no_blocks = True
+        print("⚡ Skipping Block node creation (--no-blocks)")
+    else:
+        write_blocks._no_blocks = False
 
     # Determine start block
     latest = get_latest_block()
