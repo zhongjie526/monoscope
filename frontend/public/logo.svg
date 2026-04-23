@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <!-- Monad outer diamond — corners are sharp-ish, sides curve slightly inward -->
-  <path d="M25 2 C29 8, 42 8, 48 25 C42 42, 29 42, 25 48 C21 42, 8 42, 2 25 C8 8, 21 8, 25 2Z"
+  <!-- Outer — purple filled rounded square, rotated 45° -->
+  <rect x="5" y="5" width="40" height="40" rx="8" ry="8"
         fill="#836EF9"
-        transform="rotate(0 25 25)"/>
-  <!-- Monad inner cutout — tilted more clockwise, same concave shape -->
-  <path d="M25 12 C27 15, 34 15, 38 25 C34 35, 27 35, 25 38 C23 35, 16 35, 12 25 C16 15, 23 15, 25 12Z"
+        transform="rotate(45 25 25)"/>
+  <!-- Inner — white filled rounded square, rotated 53° (more clockwise) -->
+  <rect x="12" y="12" width="26" height="26" rx="5" ry="5"
         fill="white"
-        transform="rotate(8 25 25)"/>
+        transform="rotate(53 25 25)"/>
   <!-- Graph edges -->
   <line x1="19" y1="22" x2="29" y2="20" stroke="#6366f1" stroke-width="1.5" opacity="0.35"/>
   <line x1="19" y1="22" x2="25" y2="30" stroke="#6366f1" stroke-width="1.5" opacity="0.35"/>
