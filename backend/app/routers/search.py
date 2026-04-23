@@ -28,9 +28,15 @@ class SearchResult(BaseModel):
 
 
 # Pre-built query templates for common questions (fast path, no LLM cost)
+# IMPORTANT: only use properties that actually exist in the DB:
+#   Wallet: address, first_seen, last_seen
+#   Transaction: hash, block_number, timestamp, method, value
+#   Relationships: SENT (Wallet→Transaction), TO (Transaction→Wallet)
 QUERY_TEMPLATES = {
     "top_wallets": {
-        "pattern": ["top wallets", "biggest wallets", "most active", "whale", "largest wallets", "most sent", "sent the most"],
+        "pattern": ["top wallets", "biggest wallets", "most active", "whale",
+                     "largest wallets", "most sent", "sent the most",
+                     "most transactions"],
         "cypher": """
             MATCH (w:Wallet)-[:SENT]->(tx:Transaction)
             WITH w, COUNT(tx) AS tx_count, SUM(tx.value) AS total_value
@@ -41,11 +47,12 @@ QUERY_TEMPLATES = {
         "description": "Top wallets by total value sent",
     },
     "recent_large": {
-        "pattern": ["large transfer", "big transaction", "whale movement", "large transaction", "big transfer"],
+        "pattern": ["large transfer", "big transaction", "whale movement",
+                     "large transaction", "big transfer"],
         "cypher": """
-            MATCH (from:Wallet)-[:SENT]->(tx:Transaction)-[:TO]->(to:Wallet)
+            MATCH (from_w:Wallet)-[:SENT]->(tx:Transaction)-[:TO]->(to_w:Wallet)
             WHERE tx.value > 10000
-            RETURN from.address AS from_addr, to.address AS to_addr,
+            RETURN from_w.address AS from_addr, to_w.address AS to_addr,
                    tx.value AS value, tx.hash AS hash, tx.timestamp AS timestamp
             ORDER BY tx.value DESC
             LIMIT 20
@@ -53,19 +60,22 @@ QUERY_TEMPLATES = {
         "description": "Recent large transfers (>10,000 MON)",
     },
     "suspicious": {
-        "pattern": ["suspicious", "fraud", "scam", "risky", "danger", "risk score", "risk_score", "highest risk"],
+        "pattern": ["suspicious", "fraud", "scam", "risky", "danger",
+                     "risk score", "risk_score", "highest risk",
+                     "suspicious activity"],
         "cypher": """
-            MATCH (w:Wallet)
-            WHERE w.risk_score > 0.5
-            RETURN w.address AS address, w.risk_score AS risk_score,
-                   w.labels AS labels
-            ORDER BY w.risk_score DESC
+            MATCH (w:Wallet)-[:SENT]->(tx:Transaction)
+            WITH w, COUNT(tx) AS tx_count, SUM(tx.value) AS total_value
+            WHERE tx_count > 50
+            ORDER BY tx_count DESC
             LIMIT 20
+            RETURN w.address AS address, tx_count, total_value
         """,
-        "description": "Wallets with highest risk scores",
+        "description": "Most suspicious wallets — unusually high transaction counts",
     },
     "new_wallets": {
-        "pattern": ["new wallet", "new address", "recently created", "newest", "latest wallet"],
+        "pattern": ["new wallet", "new wallets", "new address", "recently created",
+                     "newest", "latest wallet"],
         "cypher": """
             MATCH (w:Wallet)
             WHERE w.first_seen IS NOT NULL
@@ -76,7 +86,8 @@ QUERY_TEMPLATES = {
         "description": "Most recently seen wallets",
     },
     "stats": {
-        "pattern": ["stats", "statistics", "overview", "how many", "total", "give me the stats", "count"],
+        "pattern": ["stats", "statistics", "overview", "how many", "total",
+                     "give me the stats", "count"],
         "cypher": """
             MATCH (w:Wallet)
             WITH COUNT(w) AS wallet_count
@@ -86,6 +97,32 @@ QUERY_TEMPLATES = {
             RETURN wallet_count, tx_count, first_tx, last_tx
         """,
         "description": "Overall Monoscope statistics",
+    },
+    "connected": {
+        "pattern": ["connected", "transacted with each other", "bidirectional",
+                     "mutual", "both sent"],
+        "cypher": """
+            MATCH (a:Wallet)-[:SENT]->(tx1:Transaction)-[:TO]->(b:Wallet),
+                  (b)-[:SENT]->(tx2:Transaction)-[:TO]->(a)
+            WITH a, b, COUNT(DISTINCT tx1) AS a_to_b, COUNT(DISTINCT tx2) AS b_to_a
+            WHERE a.address < b.address
+            RETURN a.address AS wallet_a, b.address AS wallet_b,
+                   a_to_b, b_to_a, a_to_b + b_to_a AS total_txs
+            ORDER BY total_txs DESC
+            LIMIT 20
+        """,
+        "description": "Wallets with bidirectional transactions (sent to each other)",
+    },
+    "most_connected": {
+        "pattern": ["most connected", "most interactions", "hub"],
+        "cypher": """
+            MATCH (w:Wallet)-[:SENT]->(tx:Transaction)-[:TO]->(other:Wallet)
+            WITH w, COUNT(DISTINCT other) AS unique_recipients
+            ORDER BY unique_recipients DESC
+            LIMIT 20
+            RETURN w.address AS address, unique_recipients
+        """,
+        "description": "Most connected wallets by unique recipients",
     },
 }
 
@@ -156,8 +193,8 @@ async def search(query: SearchQuery):
         except Exception as e:
             logger.error(f"Generated Cypher failed: {cypher} — {e}")
             return SearchResult(
-                answer=f"My query had a syntax error. Let me know what you're looking for "
-                f"and I'll try differently.",
+                answer="My query had a syntax error. Let me know what you're looking for "
+                "and I'll try differently.",
                 data=None,
                 query_used=cypher,
                 source="ai",
@@ -176,8 +213,8 @@ async def search(query: SearchQuery):
     except Exception as e:
         logger.error(f"AI search error: {e}")
         return SearchResult(
-            answer=f"AI search encountered an error. Try a simpler question or ask about: "
-            f"top wallets, large transfers, suspicious activity, new wallets, or stats.",
+            answer="AI search encountered an error. Try a simpler question or ask about: "
+            "top wallets, large transfers, suspicious activity, new wallets, or stats.",
             data=None,
             source="ai",
         )

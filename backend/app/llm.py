@@ -7,24 +7,21 @@ from app.config import settings
 # Neo4j graph schema for prompt context
 GRAPH_SCHEMA = """
 Node Labels & Properties:
-- (:Wallet {address, first_seen, last_seen, risk_score, labels, tx_count, total_sent, total_received, balance, nonce})
-- (:Transaction {hash, block_number, timestamp, value, gas_price, gas_used, method_id, status})
+- (:Wallet {address, first_seen, last_seen})
+- (:Transaction {hash, block_number, timestamp, value, method})
 - (:Block {number, timestamp, tx_count})
-- (:Contract {address})
-- (:Token {address})
 
 Relationships:
 - (Wallet)-[:SENT]->(Transaction)       — wallet sent this tx
 - (Transaction)-[:TO]->(Wallet)         — tx recipient
-- (Wallet)-[r:TRANSACTED]->(Wallet)     — summary edge: {tx_count, total_value, first_tx, last_tx}
-- (Transaction)-[:IN_BLOCK]->(Block)    — tx belongs to block
 
 Notes:
 - All values are in MON (native token, 18 decimals stored as float).
 - Timestamps are Unix epoch seconds.
-- TRANSACTED is a pre-aggregated summary edge for fast analytics.
-- risk_score is 0.0–1.0 (0 = clean, 1 = very suspicious).
 - The database name is 'monad' (already set in session).
+- To find total sent by a wallet: MATCH (w:Wallet)-[:SENT]->(tx:Transaction) WITH w, SUM(tx.value) AS total
+- To find connections between wallets: MATCH (a)-[:SENT]->(tx)-[:TO]->(b) 
+- There is no risk_score, balance, or TRANSACTED relationship.
 """
 
 SYSTEM_PROMPT = f"""You are a Cypher query expert for a Monad blockchain graph database (Neo4j).
