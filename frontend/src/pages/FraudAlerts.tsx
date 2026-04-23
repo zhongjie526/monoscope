@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getWashTrading, getSybilClusters, getHighVelocity } from '../services/api';
 import Loading from '../components/Loading';
 import ErrorBox from '../components/ErrorBox';
@@ -15,6 +16,7 @@ const PATTERN_LABELS: Record<string, { label: string; icon: string; desc: string
 };
 
 export default function FraudAlerts() {
+  const navigate = useNavigate();
   const [alerts, setAlerts] = useState<FraudAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,6 +120,15 @@ export default function FraudAlerts() {
                     +{alert.wallets.length - 6} more
                   </span>
                 )}
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => navigate(`/graph?address=${alert.wallets[0]}`)}
+                  style={{ fontSize: 12, padding: '6px 14px' }}
+                >
+                  🔍 Investigate
+                </button>
               </div>
               {alert.evidence && (
                 <details style={{ marginTop: 8 }}>
