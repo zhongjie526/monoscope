@@ -1,18 +1,43 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50" fill="none">
-  <!-- Outer — Monad purple rounded diamond -->
-  <rect x="5" y="5" width="36" height="36" rx="8" ry="8"
-        fill="#836EF9"
-        transform="rotate(45 23 23)"/>
-  <!-- Inner — white rounded diamond, tilted 8° more clockwise -->
-  <rect x="11" y="11" width="24" height="24" rx="5" ry="5"
-        fill="white"
-        transform="rotate(53 23 23)"/>
+  <!-- Outer — rounded corners + concave (inward curving) sides -->
+  <path d="
+    M25 3
+    C28 3, 30 5, 32 7
+    Q38 14, 43 18
+    C45 20, 47 22, 47 25
+    C47 28, 45 30, 43 32
+    Q38 36, 32 43
+    C30 45, 28 47, 25 47
+    C22 47, 20 45, 18 43
+    Q12 36, 7 32
+    C5 30, 3 28, 3 25
+    C3 22, 5 20, 7 18
+    Q12 14, 18 7
+    C20 5, 22 3, 25 3 Z"
+    fill="#836EF9"/>
+  <!-- Inner — same shape, tilted 8° more clockwise -->
+  <path d="
+    M25 12
+    C27 12, 28 13, 29 14
+    Q33 18, 36 20
+    C37 21, 38 22, 38 25
+    C38 28, 37 29, 36 30
+    Q33 32, 29 36
+    C28 37, 27 38, 25 38
+    C23 38, 22 37, 21 36
+    Q17 32, 14 30
+    C13 29, 12 28, 12 25
+    C12 22, 13 21, 14 20
+    Q17 18, 21 14
+    C22 13, 23 12, 25 12 Z"
+    fill="white"
+    transform="rotate(8 25 25)"/>
   <!-- Graph edges -->
-  <line x1="17" y1="20" x2="27" y2="18" stroke="#6366f1" stroke-width="1.5" opacity="0.35"/>
-  <line x1="17" y1="20" x2="23" y2="28" stroke="#6366f1" stroke-width="1.5" opacity="0.35"/>
-  <line x1="27" y1="18" x2="23" y2="28" stroke="#7c3aed" stroke-width="1.5" opacity="0.35"/>
+  <line x1="19" y1="22" x2="29" y2="20" stroke="#6366f1" stroke-width="1.5" opacity="0.35"/>
+  <line x1="19" y1="22" x2="25" y2="30" stroke="#6366f1" stroke-width="1.5" opacity="0.35"/>
+  <line x1="29" y1="20" x2="25" y2="30" stroke="#7c3aed" stroke-width="1.5" opacity="0.35"/>
   <!-- Graph nodes -->
-  <circle cx="17" cy="20" r="3.5" fill="#6366f1"/>
-  <circle cx="27" cy="18" r="3" fill="#7c3aed"/>
-  <circle cx="23" cy="28" r="2.5" fill="#a78bfa"/>
+  <circle cx="19" cy="22" r="3.5" fill="#6366f1"/>
+  <circle cx="29" cy="20" r="3" fill="#7c3aed"/>
+  <circle cx="25" cy="30" r="2.5" fill="#a78bfa"/>
 </svg>
