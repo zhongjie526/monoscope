@@ -13,8 +13,8 @@ const EXAMPLE_QUERIES = [
   'New wallets',
   'Give me the stats',
   'Which wallets sent the most transactions?',
-  'Show me wallets connected to 0xabde...',
-  'What happened in block 69300000?',
+  'Find wallets that transacted with each other',
+  'Which wallets have the highest risk score?',
 ];
 
 export default function AISearch() {
