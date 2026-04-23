@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <!-- Monad outer — superellipse (squircle) with bulging edges, rotated 45° -->
-  <path d="M25 0 C38 0, 50 12, 50 25 C50 38, 38 50, 25 50 C12 50, 0 38, 0 25 C0 12, 12 0, 25 0Z"
+  <!-- Monad outer — squarish with slight edge bulge, rotated 45° -->
+  <path d="M10 2 L40 2 C47 2 48 3 48 10 L48 40 C48 47 47 48 40 48 L10 48 C3 48 2 47 2 40 L2 10 C2 3 3 2 10 2Z"
         fill="#6366f1"
         transform="rotate(45 25 25)"/>
-  <!-- Monad inner — white squircle, rotated 50° (more clockwise) -->
-  <path d="M25 9 C32 9, 41 18, 41 25 C41 32, 32 41, 25 41 C18 41, 9 32, 9 25 C9 18, 18 9, 25 9Z"
+  <!-- Monad inner — white, rotated 50° -->
+  <path d="M15 10 L35 10 C39 10 40 11 40 15 L40 35 C40 39 39 40 35 40 L15 40 C11 40 10 39 10 35 L10 15 C10 11 11 10 15 10Z"
         fill="white"
         transform="rotate(50 25 25)"/>
-  <!-- Graph edges (behind nodes) -->
+  <!-- Graph edges -->
   <line x1="18" y1="21" x2="30" y2="19" stroke="#6366f1" stroke-width="1.8" opacity="0.3"/>
   <line x1="18" y1="21" x2="25" y2="31" stroke="#6366f1" stroke-width="1.8" opacity="0.3"/>
   <line x1="30" y1="19" x2="25" y2="31" stroke="#7c3aed" stroke-width="1.8" opacity="0.3"/>
